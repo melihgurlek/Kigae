@@ -1,0 +1,563 @@
+//! Everything Kigae reads from or does to the desktop goes through [`Sys`], so the engine can be
+//! run for real, recorded for `--dry-run`, or faked in tests (SPEC.md §1).
+
+use std::collections::BTreeMap;
+use std::fmt;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use serde::{Deserialize, Serialize};
+
+pub type Result<T> = std::result::Result<T, SysError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum SysError {
+    #[error("{cmd}: {msg}")]
+    Command { cmd: String, msg: String },
+    #[error("{path}: {err}")]
+    Io { path: PathBuf, err: io::Error },
+    #[error("D-Bus {call}: {err}")]
+    DBus { call: &'static str, err: String },
+}
+
+/// What a path holds, for the journal: enough to put it back exactly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FileState {
+    Missing,
+    Link(PathBuf),
+    Content(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnitState {
+    pub enabled: bool,
+    pub active: bool,
+}
+
+/// One change to the desktop. `Display` is what `--dry-run` prints.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Action {
+    /// A program and its arguments.
+    Exec(Vec<String>),
+    /// `sh -c` (manifest hooks).
+    Shell(String),
+    /// `kwriteconfig6`; `value: None` deletes the key.
+    KWrite { file: String, groups: Vec<String>, key: String, value: Option<String>, boolean: bool },
+    KWinReconfigure,
+    EvaluateScript { what: String, script: String },
+    WriteFile { path: PathBuf, contents: String },
+    Symlink { link: PathBuf, target: PathBuf },
+    Remove(PathBuf),
+    Unit { unit: String, enable: Option<bool>, active: Option<bool> },
+    ReloadKitty,
+}
+
+impl fmt::Display for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Action::Exec(argv) => write!(f, "{}", argv.join(" ")),
+            Action::Shell(cmd) => write!(f, "sh -c {cmd:?}"),
+            Action::KWrite { file, groups, key, value, .. } => {
+                let path = format!("{file} [{}] {key}", groups.join("]["));
+                match value {
+                    Some(v) => write!(f, "kconfig {path} = {v:?}"),
+                    None => write!(f, "kconfig {path} (delete)"),
+                }
+            }
+            Action::KWinReconfigure => write!(f, "KWin reconfigure"),
+            Action::EvaluateScript { what, .. } => write!(f, "plasmashell script: {what}"),
+            Action::WriteFile { path, contents } => {
+                write!(f, "write {} ({} bytes)", path.display(), contents.len())
+            }
+            Action::Symlink { link, target } => {
+                write!(f, "link {} -> {}", link.display(), target.display())
+            }
+            Action::Remove(p) => write!(f, "remove {}", p.display()),
+            Action::Unit { unit, enable, active } => {
+                let mut parts = vec![];
+                if let Some(e) = enable {
+                    parts.push(if *e { "enable" } else { "disable" });
+                }
+                if let Some(a) = active {
+                    parts.push(if *a { "start" } else { "stop" });
+                }
+                write!(f, "systemctl --user {} {unit}", parts.join("+"))
+            }
+            Action::ReloadKitty => write!(f, "reload kitty (SIGUSR1)"),
+        }
+    }
+}
+
+pub trait Sys {
+    fn kread(&mut self, file: &str, groups: &[String], key: &str) -> Result<Option<String>>;
+    fn file_state(&mut self, path: &Path) -> Result<FileState>;
+    fn exists(&mut self, path: &Path) -> bool;
+    fn unit_state(&mut self, unit: &str) -> Result<UnitState>;
+    fn unit_exists(&mut self, unit: &str) -> bool;
+    /// `org.kde.PlasmaShell.dumpCurrentLayoutJS`: a script that rebuilds today's panels.
+    fn dump_layout(&mut self) -> Result<String>;
+    /// The first desktop's wallpaper image (a `file://` URL), if it uses `org.kde.image`.
+    fn wallpaper(&mut self) -> Result<Option<String>>;
+    /// Is the sun up, by Plasma's NightTime schedule.
+    fn is_day(&mut self) -> Result<bool>;
+    fn act(&mut self, action: &Action) -> Result<()>;
+}
+
+// ───────────────────────────── real ─────────────────────────────
+
+/// Talks to the live session.
+#[derive(Default)]
+pub struct RealSys {
+    bus: Option<zbus::blocking::Connection>,
+}
+
+/// kreadconfig6 can't tell "unset" from "empty"; ask for this default to find out.
+const UNSET: &str = "\u{1}kigae-unset";
+
+impl RealSys {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn bus(&mut self, call: &'static str) -> Result<&zbus::blocking::Connection> {
+        if self.bus.is_none() {
+            let c = zbus::blocking::Connection::session()
+                .map_err(|e| SysError::DBus { call, err: e.to_string() })?;
+            self.bus = Some(c);
+        }
+        Ok(self.bus.as_ref().expect("just set"))
+    }
+
+    fn call<B, R>(&mut self, call: &'static str, dest: &str, path: &str, iface: &str, method: &str, body: &B) -> Result<R>
+    where
+        B: serde::Serialize + zbus::zvariant::DynamicType,
+        R: for<'d> zbus::zvariant::DynamicDeserialize<'d>,
+    {
+        let bus = self.bus(call)?;
+        let err = |e: zbus::Error| SysError::DBus { call, err: e.to_string() };
+        let reply = bus.call_method(Some(dest), path, Some(iface), method, body).map_err(err)?;
+        reply.body().deserialize::<R>().map_err(err)
+    }
+
+    fn evaluate(&mut self, script: &str) -> Result<String> {
+        self.call(
+            "evaluateScript",
+            "org.kde.plasmashell",
+            "/PlasmaShell",
+            "org.kde.PlasmaShell",
+            "evaluateScript",
+            &(script,),
+        )
+    }
+}
+
+pub fn run(argv: &[&str]) -> Result<String> {
+    let cmd = argv.join(" ");
+    let out = Command::new(argv[0])
+        .args(&argv[1..])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| SysError::Command { cmd: cmd.clone(), msg: e.to_string() })?;
+    if !out.status.success() {
+        let mut msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        if msg.is_empty() {
+            msg = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        }
+        if msg.is_empty() {
+            msg = format!("exited with {}", out.status);
+        }
+        return Err(SysError::Command { cmd, msg });
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn io_err(path: &Path) -> impl FnOnce(io::Error) -> SysError + '_ {
+    move |err| SysError::Io { path: path.to_path_buf(), err }
+}
+
+fn group_args(groups: &[String]) -> Vec<&str> {
+    groups.iter().flat_map(|g| ["--group", g.as_str()]).collect()
+}
+
+impl Sys for RealSys {
+    fn kread(&mut self, file: &str, groups: &[String], key: &str) -> Result<Option<String>> {
+        let mut argv = vec!["kreadconfig6", "--file", file];
+        argv.extend(group_args(groups));
+        argv.extend(["--key", key, "--default", UNSET]);
+        let out = run(&argv)?;
+        let v = out.strip_suffix('\n').unwrap_or(&out);
+        Ok((v != UNSET).then(|| v.to_string()))
+    }
+
+    fn file_state(&mut self, path: &Path) -> Result<FileState> {
+        match fs::symlink_metadata(path) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(FileState::Missing),
+            Err(e) => Err(io_err(path)(e)),
+            Ok(m) if m.file_type().is_symlink() => {
+                Ok(FileState::Link(fs::read_link(path).map_err(io_err(path))?))
+            }
+            Ok(_) => Ok(FileState::Content(fs::read_to_string(path).map_err(io_err(path))?)),
+        }
+    }
+
+    fn exists(&mut self, path: &Path) -> bool {
+        path.exists()
+    }
+
+    fn unit_state(&mut self, unit: &str) -> Result<UnitState> {
+        // both exit non-zero for "disabled"/"inactive", so read stdout only
+        let q = |verb: &str| {
+            Command::new("systemctl")
+                .args(["--user", verb, unit])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .map_err(|e| SysError::Command { cmd: format!("systemctl {verb}"), msg: e.to_string() })
+        };
+        Ok(UnitState { enabled: q("is-enabled")? == "enabled", active: q("is-active")? == "active" })
+    }
+
+    fn unit_exists(&mut self, unit: &str) -> bool {
+        Command::new("systemctl")
+            .args(["--user", "cat", unit])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    fn dump_layout(&mut self) -> Result<String> {
+        let bytes: Vec<u8> = self.call(
+            "dumpCurrentLayoutJS",
+            "org.kde.plasmashell",
+            "/PlasmaShell",
+            "org.kde.PlasmaShell",
+            "dumpCurrentLayoutJS",
+            &(),
+        )?;
+        String::from_utf8(bytes).map_err(|e| SysError::DBus { call: "dumpCurrentLayoutJS", err: e.to_string() })
+    }
+
+    fn wallpaper(&mut self) -> Result<Option<String>> {
+        let out = self.evaluate(
+            "var d = desktops()[0];\
+             if (d.wallpaperPlugin == 'org.kde.image') {\
+               d.currentConfigGroup = ['Wallpaper', 'org.kde.image', 'General'];\
+               print(d.readConfig('Image'));\
+             }",
+        )?;
+        let v = out.trim();
+        Ok((!v.is_empty()).then(|| v.to_string()))
+    }
+
+    fn is_day(&mut self) -> Result<bool> {
+        use std::collections::HashMap;
+        use zbus::zvariant::{OwnedValue, Value};
+        const CALL: &str = "NightTime";
+        let opts: HashMap<&str, Value> = HashMap::new();
+        let reply: HashMap<String, OwnedValue> = self.call(
+            CALL,
+            "org.kde.NightTime",
+            "/org/kde/NightTime/Manager",
+            "org.kde.NightTime.Manager",
+            "Subscribe",
+            &(opts,),
+        )?;
+        let bad = |what: &str| SysError::DBus { call: CALL, err: format!("unexpected reply: {what}") };
+        if let Some(cookie) = reply.get("Cookie").and_then(|c| u32::try_from(c).ok()) {
+            let _: () = self.call(
+                CALL,
+                "org.kde.NightTime",
+                "/org/kde/NightTime/Manager",
+                "org.kde.NightTime.Manager",
+                "Unsubscribe",
+                &(cookie,),
+            )?;
+        }
+        // Schedule = (kind, v) where v is a(xxxxx): per cycle noon, morning start/end,
+        // evening start/end, in ms since the epoch
+        let schedule = reply.get("Schedule").ok_or_else(|| bad("no Schedule"))?;
+        let Value::Structure(st) = &**schedule else { return Err(bad("Schedule is not a struct")) };
+        let inner = match st.fields().get(1) {
+            Some(Value::Value(v)) => &**v,
+            Some(v) => v,
+            None => return Err(bad("Schedule has no cycles")),
+        };
+        let Value::Array(arr) = inner else { return Err(bad("cycles are not an array")) };
+        let mut cycles = vec![];
+        for item in arr.iter() {
+            let Value::Structure(c) = item else { return Err(bad("cycle is not a struct")) };
+            let x: Vec<i64> = c.fields().iter().filter_map(|f| if let Value::I64(x) = f { Some(*x) } else { None }).collect();
+            let [a, b, c, d, e] = x[..] else { return Err(bad("cycle is not 5 times")) };
+            cycles.push((a, b, c, d, e));
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or_default();
+        Ok(crate::daynight::is_day(now, &cycles))
+    }
+
+    fn act(&mut self, action: &Action) -> Result<()> {
+        match action {
+            Action::Exec(argv) => {
+                let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+                run(&argv).map(drop)
+            }
+            Action::Shell(cmd) => run(&["sh", "-c", cmd]).map(drop),
+            Action::KWrite { file, groups, key, value, boolean } => {
+                let mut argv = vec!["kwriteconfig6", "--notify", "--file", file.as_str()];
+                argv.extend(group_args(groups));
+                argv.extend(["--key", key.as_str()]);
+                match value {
+                    Some(v) => {
+                        if *boolean {
+                            argv.extend(["--type", "bool"]);
+                        }
+                        argv.push(v);
+                    }
+                    None => argv.push("--delete"),
+                }
+                run(&argv).map(drop)
+            }
+            Action::KWinReconfigure => {
+                // `reconfigure` is no-reply: send it without waiting for an answer
+                let bus = self.bus("KWin reconfigure")?;
+                let err = |e: zbus::Error| SysError::DBus { call: "KWin reconfigure", err: e.to_string() };
+                let msg = zbus::message::Message::method_call("/KWin", "reconfigure")
+                    .map_err(err)?
+                    .destination("org.kde.KWin")
+                    .map_err(err)?
+                    .interface("org.kde.KWin")
+                    .map_err(err)?
+                    .with_flags(zbus::message::Flags::NoReplyExpected)
+                    .map_err(err)?
+                    .build(&())
+                    .map_err(err)?;
+                bus.send(&msg).map_err(err)
+            }
+            Action::EvaluateScript { script, .. } => {
+                let out = self.evaluate(script)?;
+                // plasmashell reports script errors in the returned text, not as a D-Bus error
+                if out.contains("Error:") || out.contains("TypeError") || out.contains("ReferenceError") {
+                    return Err(SysError::Command { cmd: "evaluateScript".into(), msg: out.trim().into() });
+                }
+                Ok(())
+            }
+            Action::WriteFile { path, contents } => {
+                if let Some(dir) = path.parent() {
+                    fs::create_dir_all(dir).map_err(io_err(dir))?;
+                }
+                let tmp = path.with_extension("kigae-tmp");
+                fs::write(&tmp, contents).map_err(io_err(&tmp))?;
+                fs::rename(&tmp, path).map_err(io_err(path))
+            }
+            Action::Symlink { link, target } => {
+                if let Some(dir) = link.parent() {
+                    fs::create_dir_all(dir).map_err(io_err(dir))?;
+                }
+                // atomic swap: make the new link beside it, then rename over
+                let tmp = link.with_extension("kigae-tmp");
+                let _ = fs::remove_file(&tmp);
+                std::os::unix::fs::symlink(target, &tmp).map_err(io_err(&tmp))?;
+                fs::rename(&tmp, link).map_err(io_err(link))
+            }
+            Action::Remove(path) => match fs::remove_file(path) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => Err(io_err(path)(e)),
+                _ => Ok(()),
+            },
+            Action::Unit { unit, enable, active } => {
+                if let Some(e) = enable {
+                    run(&["systemctl", "--user", if *e { "enable" } else { "disable" }, unit])?;
+                }
+                if let Some(a) = active {
+                    run(&["systemctl", "--user", if *a { "start" } else { "stop" }, unit])?;
+                }
+                Ok(())
+            }
+            Action::ReloadKitty => {
+                // exits 1 when no kitty is running, which is fine
+                let _ = Command::new("pkill").args(["-USR1", "-x", "kitty"]).status();
+                Ok(())
+            }
+        }
+    }
+}
+
+// ───────────────────────────── fake ─────────────────────────────
+
+/// An in-memory desktop for tests and `--dry-run`: reads come from maps, actions are recorded
+/// and also applied to the maps, so later reads (and undo) see them.
+#[derive(Debug, Default, Clone)]
+pub struct FakeSys {
+    /// `(file, "Group/Sub", key)` → value
+    pub kconfig: BTreeMap<(String, String, String), String>,
+    pub files: BTreeMap<PathBuf, FileState>,
+    /// Paths that exist for `exists` (themes, wallpapers, …) besides `files`.
+    pub present: Vec<PathBuf>,
+    pub units: BTreeMap<String, UnitState>,
+    pub layout: String,
+    pub wallpaper: Option<String>,
+    pub day: bool,
+    pub actions: Vec<Action>,
+    /// Make the action whose `Display` contains this fail.
+    pub fail_on: Option<String>,
+}
+
+impl FakeSys {
+    fn key(file: &str, groups: &[String], key: &str) -> (String, String, String) {
+        (file.to_string(), groups.join("/"), key.to_string())
+    }
+
+    pub fn set_kconfig(&mut self, file: &str, groups: &str, key: &str, value: &str) {
+        self.kconfig.insert((file.into(), groups.into(), key.into()), value.into());
+    }
+
+    pub fn get_kconfig(&self, file: &str, groups: &str, key: &str) -> Option<&str> {
+        self.kconfig.get(&(file.into(), groups.into(), key.into())).map(String::as_str)
+    }
+
+    /// The actions as `--dry-run` prints them.
+    pub fn log(&self) -> Vec<String> {
+        self.actions.iter().map(ToString::to_string).collect()
+    }
+}
+
+impl Sys for FakeSys {
+    fn kread(&mut self, file: &str, groups: &[String], key: &str) -> Result<Option<String>> {
+        Ok(self.kconfig.get(&Self::key(file, groups, key)).cloned())
+    }
+
+    fn file_state(&mut self, path: &Path) -> Result<FileState> {
+        Ok(self.files.get(path).cloned().unwrap_or(FileState::Missing))
+    }
+
+    fn exists(&mut self, path: &Path) -> bool {
+        self.present.iter().any(|p| p == path)
+            || !matches!(self.files.get(path), None | Some(FileState::Missing))
+    }
+
+    fn unit_state(&mut self, unit: &str) -> Result<UnitState> {
+        Ok(self.units.get(unit).copied().unwrap_or(UnitState { enabled: false, active: false }))
+    }
+
+    fn unit_exists(&mut self, unit: &str) -> bool {
+        self.units.contains_key(unit)
+    }
+
+    fn dump_layout(&mut self) -> Result<String> {
+        Ok(self.layout.clone())
+    }
+
+    fn wallpaper(&mut self) -> Result<Option<String>> {
+        Ok(self.wallpaper.clone())
+    }
+
+    fn is_day(&mut self) -> Result<bool> {
+        Ok(self.day)
+    }
+
+    fn act(&mut self, action: &Action) -> Result<()> {
+        if let Some(pat) = &self.fail_on
+            && action.to_string().contains(pat.as_str())
+        {
+            return Err(SysError::Command { cmd: action.to_string(), msg: "fake failure".into() });
+        }
+        self.actions.push(action.clone());
+        match action {
+            Action::KWrite { file, groups, key, value, .. } => {
+                let k = Self::key(file, groups, key);
+                match value {
+                    Some(v) => self.kconfig.insert(k, v.clone()),
+                    None => self.kconfig.remove(&k),
+                };
+            }
+            Action::Exec(argv) => {
+                let set = |s: &mut Self, f: &str, g: &str, k: &str| {
+                    if let Some(v) = argv.get(1) {
+                        s.set_kconfig(f, g, k, v);
+                    }
+                };
+                match argv.first().map(String::as_str) {
+                    Some("plasma-apply-colorscheme") => set(self, "kdeglobals", "General", "ColorScheme"),
+                    Some("plasma-apply-desktoptheme") => set(self, "plasmarc", "Theme", "name"),
+                    Some("/usr/libexec/plasma-changeicons") => set(self, "kdeglobals", "Icons", "Theme"),
+                    Some("plasma-apply-cursortheme") => set(self, "kcminputrc", "Mouse", "cursorTheme"),
+                    Some("plasma-apply-wallpaperimage") => {
+                        self.wallpaper = argv.get(1).map(|p| format!("file://{p}"));
+                    }
+                    _ => {}
+                }
+            }
+            Action::EvaluateScript { script, .. } => {
+                self.layout = script.clone();
+            }
+            Action::WriteFile { path, contents } => {
+                self.files.insert(path.clone(), FileState::Content(contents.clone()));
+            }
+            Action::Symlink { link, target } => {
+                self.files.insert(link.clone(), FileState::Link(target.clone()));
+            }
+            Action::Remove(p) => {
+                self.files.remove(p);
+            }
+            Action::Unit { unit, enable, active } => {
+                let s = self.units.entry(unit.clone()).or_insert(UnitState { enabled: false, active: false });
+                if let Some(e) = enable {
+                    s.enabled = *e;
+                }
+                if let Some(a) = active {
+                    s.active = *a;
+                }
+            }
+            Action::Shell(_) | Action::KWinReconfigure | Action::ReloadKitty => {}
+        }
+        Ok(())
+    }
+}
+
+// ───────────────────────────── dry run ─────────────────────────────
+
+/// Reads from the live session, records actions instead of doing them (`--dry-run`).
+pub struct DryRun<S: Sys> {
+    pub inner: S,
+    pub actions: Vec<Action>,
+}
+
+impl<S: Sys> DryRun<S> {
+    pub fn new(inner: S) -> Self {
+        Self { inner, actions: vec![] }
+    }
+}
+
+impl<S: Sys> Sys for DryRun<S> {
+    fn kread(&mut self, file: &str, groups: &[String], key: &str) -> Result<Option<String>> {
+        self.inner.kread(file, groups, key)
+    }
+    fn file_state(&mut self, path: &Path) -> Result<FileState> {
+        self.inner.file_state(path)
+    }
+    fn exists(&mut self, path: &Path) -> bool {
+        self.inner.exists(path)
+    }
+    fn unit_state(&mut self, unit: &str) -> Result<UnitState> {
+        self.inner.unit_state(unit)
+    }
+    fn unit_exists(&mut self, unit: &str) -> bool {
+        self.inner.unit_exists(unit)
+    }
+    fn dump_layout(&mut self) -> Result<String> {
+        self.inner.dump_layout()
+    }
+    fn wallpaper(&mut self) -> Result<Option<String>> {
+        self.inner.wallpaper()
+    }
+    fn is_day(&mut self) -> Result<bool> {
+        self.inner.is_day()
+    }
+    fn act(&mut self, action: &Action) -> Result<()> {
+        self.actions.push(action.clone());
+        Ok(())
+    }
+}

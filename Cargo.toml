@@ -10,6 +10,6 @@ license = "MIT"
 [workspace.dependencies]
 kigae-core = { path = "crates/kigae-core" }
 serde = { version = "1", features = ["derive"] }
-toml = "0.9"
+toml = { version = "0.9", features = ["preserve_order"] }
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }

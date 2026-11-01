@@ -10,16 +10,17 @@ The design is in `SPEC.md`. Each phase ends with something that works on the rea
 - [ ] Overlay build deps (needs root, run by hand):
   `sudo dnf install qt6-qtbase-devel qt6-qtdeclarative-devel kf6-kwindowsystem-devel layer-shell-qt-devel`
 
-## Phase 1: engine + CLI, Ukiyo ⇄ og working live
+## Phase 1: engine + CLI, Ukiyo ⇄ og working live ✅ (2026-11-01)
 
-This is the part that proves the idea.
+- [x] `kigae-core`: config, rice discovery (git + local `manifests/`), `Sys` trait (real / dry run / fake)
+- [x] Parts in apply order, owned keys, `[unset]` policy + `base.toml`, rollback on critical failure
+- [x] Undo journal; `kigae list | current | apply | mood | undo | doctor | install | uninstall`
+- [x] Prelude, Ukiyo's `kigae-layout.js`, og's `manifests/og/layout.js`
+- [x] Manifests: `rice.toml` on `rice/ukiyo`, `manifests/og.toml` (+ og's kitty theme)
+- [x] Base files point at Kigae links: kitty `include kigae-current.conf`, `.zshrc` → `~/.config/kigae/p10k.zsh`, nvim `plugins/kigae.lua`; `ukiyo-sky --force`
+- [x] Spike: 10 live switches Ukiyo ⇄ og with no plasmashell restart (3–7 s each), launchers kept, two undos walk back cleanly
 
-1. `kigae-core`: config, rice discovery (git + local `manifests/`), and a `Runner` trait (real runner plus a recording fake).
-2. Parts in apply order: services-stop, kwin, colors, style, icons, cursor, layout, wallpaper, apps, splash, services-start.
-3. Undo journal, plus `kigae list | current | apply | undo | doctor | install --dry-run`.
-4. `data/prelude.js`, Ukiyo's `kigae-layout.js` (adapted from `ukiyo/layout.js` so it builds from nothing), and og's layout script (read out of og's appletsrc).
-5. Manifests: `rice.toml` on `rice/ukiyo` and `manifests/og.toml`. For Ukiyo's `[install]`, use the file list in `ukiyo/revert.sh`.
-6. Spike: Ukiyo → og → Ukiyo ten times in a row with no plasmashell restart.
+Left for later: a `day/night` timer for og until the daemon exists (`kigae mood` works by hand).
 
 ## Phase 2: daemon + overlay
 

@@ -13,3 +13,4 @@ overlay = ["daemon"]   # cxx-qt + QML, needs the Qt devel packages (phase 2)
 [dependencies]
 kigae-core.workspace = true
 clap.workspace = true
+serde_json = "1.0.154"

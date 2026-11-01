@@ -1,0 +1,45 @@
+# og: Melih's own design (Scratchy at night, Itchy by day).
+# Lives here, not on backup/og, because that branch is a restore point and stays untouched.
+schema = 1
+id = "og"
+name = "Scratchy & Itchy"
+kanji = "原"
+tagline = "the original: Scratchy by night, Itchy by day"
+branch = "backup/og"
+
+[plasma]
+icons = "Papirus"
+cursor = "breeze_cursors"
+layout = "./og/layout.js"
+wallpaper = "~/Fedora Backup/Pictures/Wallpapers/1759598917993263.jpg"
+
+# Plasma's AutomaticLookAndFeel used to do this; Kigae does it instead (SPEC.md §6)
+[daynight.light]
+colors = "Itchy"
+style = "Itchy"
+kconfig.kwinrc."org.kde.kdecoration2/library" = "org.kde.kwin.aurorae"
+kconfig.kwinrc."org.kde.kdecoration2/theme" = "__aurorae__svg__Itchy"
+
+[daynight.dark]
+colors = "Scratchy"
+style = "Scratchy"
+kconfig.kwinrc."org.kde.kdecoration2/library" = "org.kde.kwin.aurorae"
+kconfig.kwinrc."org.kde.kdecoration2/theme" = "__aurorae__svg__Scratchy"
+
+[links]
+"~/.config/kitty/kigae-current.conf" = "~/.config/kitty/og.conf"
+"~/.config/kigae/p10k.zsh" = "~/.p10k.zsh"
+
+[vscode]
+"workbench.colorTheme" = "Catppuccin Mocha"
+"workbench.iconTheme" = "catppuccin-mocha"
+"workbench.colorCustomizations" = { "[Catppuccin Mocha]" = { "terminal.background" = "#1e1e2e", "terminal.foreground" = "#cdd6f4", "editor.background" = "#1e1e2e" }, "titleBar.activeBackground" = "#cba6f7", "titleBar.activeForeground" = "#1e1e2e" }
+
+[install]
+"./og/kitty.conf" = ".config/kitty/og.conf"
+"home/.local/share/color-schemes/Scratchy.colors" = ".local/share/color-schemes/Scratchy.colors"
+"home/.local/share/color-schemes/Itchy.colors" = ".local/share/color-schemes/Itchy.colors"
+"home/.local/share/plasma/desktoptheme/Scratchy" = ".local/share/plasma/desktoptheme/Scratchy"
+"home/.local/share/plasma/desktoptheme/Itchy" = ".local/share/plasma/desktoptheme/Itchy"
+"home/.local/share/aurorae/themes/Scratchy" = ".local/share/aurorae/themes/Scratchy"
+"home/.local/share/aurorae/themes/Itchy" = ".local/share/aurorae/themes/Itchy"
