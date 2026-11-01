@@ -32,6 +32,16 @@ The shared base files each point at one link that Kigae owns:
 - `~/.zshrc` sources `~/.config/kigae/p10k.zsh` (falling back to `~/.p10k.zsh`)
 - Neovim loads `~/.config/nvim/lua/plugins/kigae.lua` when it exists
 
+## Any rice, without writing a manifest
+
+Put the rice on screen once, then:
+
+```
+kigae capture catppuccin --name "Catppuccin Mocha"
+```
+
+Kigae writes `manifests/catppuccin.toml` and `manifests/catppuccin/layout.js` from what's on screen. Add `[services]` or `[hooks]` by hand if the rice has background jobs.
+
 ## When a rice doesn't theme an app
 
 Pick per section in `~/.config/kigae/config.toml`:

@@ -22,6 +22,25 @@ The design is in `SPEC.md`. Each phase ends with something that works on the rea
 
 Left for later: a `day/night` timer for og until the daemon exists (`kigae mood` works by hand).
 
+## Phase 1b: `kigae capture`, so any rice can be switched ✅ (2026-11-01)
+
+Kigae only switches rices that have a manifest, and writing one by hand (plus a panel script) is
+the real barrier. `kigae capture <id>` reads the rice on screen into `manifests/<id>.toml` and
+`manifests/<id>/layout.js`:
+
+- [x] Plasma parts: colours, style, icons, cursor, wallpaper
+- [x] Look keys from KConfig files: window decoration, KWin effects, fonts, accent colour, widget
+      style, splash, Konsole/Kate themes, cursor size
+- [x] Panels: plasmashell's layout dump, rewritten to run after the prelude (dock launchers from
+      `kigae.launchers`), plus `kigae.tray()` / `kigae.desktop()` for what the dump leaves out
+- [x] Kigae links that exist (kitty, p10k, nvim) and VS Code theme keys
+- [x] Notes for what it can't see: services, hooks, day/night pairs, unlinked app themes
+- [x] Refuses to overwrite without `--force`; the result passes `Manifest::parse` and `doctor`
+- [x] Live test: captured Ukiyo as a new rice, switched og → captured: same panels, tray and clock; against the real Ukiyo only the timer, hook and layout rerun differ
+- [x] Values equal to `base.toml` are left out (it found the fonts, which og and Ukiyo share, so they moved to `base.toml`)
+
+Later: `kigae capture <id> --mood light|dark` to fill `[daynight]` from two captures.
+
 ## Phase 2: daemon + overlay
 
 - `kigae daemon` (zbus, `dev.kigae.Kigae`), `data/kigae.service`
@@ -31,7 +50,7 @@ Left for later: a `day/night` timer for og until the daemon exists (`kigae mood`
 
 ## Phase 3: Catppuccin + previews
 
-- Catppuccin manifest (`rice/catppuccin-mocha`)
+- Catppuccin: apply it the old way once, then `kigae capture catppuccin-mocha`
 - `kigae shoot`: apply each rice and take a screenshot with `spectacle -b -f -n -o`
 
 ## Phase 4: deep switch

@@ -123,6 +123,17 @@ vscode  = "keep"   # overrides: kconfig, links, vscode
 
 Plasma parts a rice leaves out also come from `base.toml` if it sets them. A key set in a rice's mood counts as set by the rice, so the base never overrides day/night.
 
+### 3.2 Capturing a rice
+
+A rice doesn't need a hand-written manifest. Put it on screen once (the old way, or it's already there) and run `kigae capture <id>`. Kigae reads:
+
+- the Plasma parts (colours, style, icons, cursor, wallpaper)
+- the look keys of KConfig files: window decoration, KWin effects, fonts, accent colour, widget style, splash, Konsole/Kate themes, cursor size
+- the panels: plasmashell's layout dump, rewritten to run after the prelude, with the dock taking `kigae.launchers` and `kigae.tray()` / `kigae.desktop()` for what the dump leaves out
+- the Kigae links that exist, and VS Code's theme keys (with the icon theme's own settings)
+
+Anything equal to `base.toml` is left out, so the manifest only holds what's specific to the rice. Kigae can't see services, hooks or a day/night pair; the command says so, and you add those by hand. It writes nothing over an existing manifest without `--force`, and runs `doctor` on the result.
+
 ## 4. Apply pipeline
 
 1. **Resolve**: load the target manifest and the current one (from `~/.local/state/kigae/current`).
@@ -206,6 +217,8 @@ kigae mood [light|dark] [--dry-run]   re-apply the active rice's day/night parts
 kigae undo [--list | <ts>]
 kigae install <id> [--dry-run] [--force]   copy [install] assets into $HOME once
 kigae uninstall <id>             remove exactly what install copied
+kigae capture <id> [--name --kanji --tagline --branch] [--dry-run] [--force]
+                                 read the rice on screen into manifests/<id>.toml + <id>/layout.js
 kigae doctor [<id>...]           preflight check without applying
 kigae shoot [<id>...]            apply each rice in turn and take its preview screenshot
 kigae deep <id>                  SDDM + GRUB, one pkexec prompt

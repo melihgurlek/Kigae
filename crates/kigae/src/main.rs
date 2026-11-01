@@ -12,6 +12,7 @@ use kigae_core::journal::{Journal, Status};
 use kigae_core::manifest::{Manifest, MoodKind, UnsetPolicy};
 use kigae_core::sys::{DryRun, FileState, RealSys, Sys};
 use kigae_core::install;
+use kigae_core::capture;
 
 #[derive(Parser)]
 #[command(version, about = "Live rice switcher for KDE Plasma")]
@@ -82,6 +83,25 @@ enum Command {
     },
     /// Remove exactly what `install` copied
     Uninstall { id: String },
+    /// Read the rice on screen into manifests/<id>.toml and manifests/<id>/layout.js
+    Capture {
+        id: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        kanji: Option<String>,
+        #[arg(long)]
+        tagline: Option<String>,
+        /// The dotfiles branch the rice's files are on
+        #[arg(long)]
+        branch: Option<String>,
+        /// Print the manifest and layout, write nothing
+        #[arg(long)]
+        dry_run: bool,
+        /// Overwrite an existing manifest
+        #[arg(long)]
+        force: bool,
+    },
     /// Check that rices' parts are installed, without applying
     Doctor { ids: Vec<String> },
     /// Apply each rice in turn and take its preview screenshot
@@ -96,6 +116,7 @@ enum Command {
 
 struct Ctx {
     paths: Paths,
+    manifests: PathBuf,
     rices: Vec<Rice>,
     base: Option<Manifest>,
     policy: UnsetPolicy,
@@ -111,7 +132,8 @@ fn ctx() -> Res<Ctx> {
     for w in warnings {
         eprintln!("kigae: warning: {w}");
     }
-    Ok(Ctx { paths, rices, base, policy: cfg.unset.policy() })
+    let manifests = paths.expand(&cfg.manifests);
+    Ok(Ctx { paths, manifests, rices, base, policy: cfg.unset.policy() })
 }
 
 impl Ctx {
@@ -158,6 +180,9 @@ fn main() -> ExitCode {
         Command::Undo { list, ts } => undo(list, ts),
         Command::Install { id, dry_run, force } => install_cmd(&id, dry_run, force),
         Command::Uninstall { id } => uninstall(&id),
+        Command::Capture { id, name, kanji, tagline, branch, dry_run, force } => {
+            capture_cmd(capture::Info { id, name, kanji, tagline, branch }, dry_run, force)
+        }
         Command::Doctor { ids } => doctor(&ids),
         Command::Daemon | Command::Overlay => Err("not built yet (phase 2 in PLAN.md)".into()),
         Command::Shoot { .. } => Err("not built yet (phase 3 in PLAN.md)".into()),
@@ -350,4 +375,43 @@ fn doctor(ids: &[String]) -> Res {
         }
     }
     if bad { Err("problems found".into()) } else { Ok(()) }
+}
+
+fn capture_cmd(info: capture::Info, dry_run: bool, force: bool) -> Res {
+    // the id has to be one a manifest accepts
+    Manifest::parse(&format!("schema = 1\nid = {:?}\nname = \"x\"", info.id)).map_err(|e| e.to_string())?;
+    let c = ctx()?;
+    if let Ok(r) = c.rice(&info.id)
+        && r.local_dir.is_none()
+    {
+        return Err(format!("{} already has a rice.toml on {}; capture under another id", info.id, r.branch.as_deref().unwrap_or("?")));
+    }
+    let toml_path = c.manifests.join(format!("{}.toml", info.id));
+    let layout_path = c.manifests.join(&info.id).join("layout.js");
+    if !dry_run && !force && toml_path.exists() {
+        return Err(format!("{} exists (use --force to overwrite)", toml_path.display()));
+    }
+    let mut sys = RealSys::new();
+    let out = capture::capture(&mut sys, &c.paths, &info, c.base.as_ref()).map_err(|e| e.to_string())?;
+    let m = Manifest::parse(&out.manifest).map_err(|e| format!("captured manifest doesn't parse (a bug): {e}"))?;
+    if dry_run {
+        println!("── {}\n{}", toml_path.display(), out.manifest);
+        println!("── {}\n{}", layout_path.display(), out.layout);
+    } else {
+        let write = |p: &std::path::Path, text: &str| -> Res {
+            std::fs::create_dir_all(p.parent().expect("has parent")).map_err(|e| e.to_string())?;
+            std::fs::write(p, text).map_err(|e| format!("{}: {e}", p.display()))
+        };
+        write(&toml_path, &out.manifest)?;
+        write(&layout_path, &out.layout)?;
+        println!("captured {} → {}", info.id, toml_path.display());
+    }
+    let problems = engine::doctor(&mut sys, &c.paths, &m);
+    for p in &problems {
+        println!("  problem: {p}");
+    }
+    for n in &out.notes {
+        println!("  note: {n}");
+    }
+    Ok(())
 }
