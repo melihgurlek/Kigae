@@ -16,8 +16,13 @@ pub enum Entry {
     Style { old: Option<String> },
     Icons { old: Option<String> },
     Cursor { old: Option<String> },
-    /// `dumpCurrentLayoutJS` output from before the switch.
-    Layout { script: String },
+    /// `dumpCurrentLayoutJS` output from before the switch, plus what it leaves out (tray
+    /// settings, desktop widget positions) for `kigae.restore`.
+    Layout {
+        script: String,
+        #[serde(default)]
+        state: Option<String>,
+    },
     Wallpaper { old: Option<String> },
     File { path: PathBuf, old: FileState },
     Unit { unit: String, old: UnitState },

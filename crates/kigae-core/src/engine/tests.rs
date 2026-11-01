@@ -81,7 +81,8 @@ fn ukiyo_desktop() -> FakeSys {
     s.files.insert("/h/.config/Code/User/settings.json".into(), FileState::Content(SETTINGS.into()));
     s.files.insert("/h/.local/state/kigae/current".into(), FileState::Content("ukiyo\n".into()));
     s.units.insert("ukiyo-sky.timer".into(), UnitState { enabled: true, active: true });
-    s.layout = "UKIYO-LAYOUT".into();
+    s.layout = "UKIYO-LAYOUT\nplasma.loadSerializedLayout(layout);".into();
+    s.layout_state = r#"{"trays":[{"General":{"hiddenItems":["a"]}}],"desk":[]}"#.into();
     s.wallpaper = Some("file:///h/Pictures/Wallpapers/ukiyo/night-wave.jpg".into());
     s
 }
@@ -126,7 +127,7 @@ fn ukiyo_to_og_at_night() {
             "write /h/.local/state/kigae/current (3 bytes)",
         ]
     );
-    assert!(sys.layout.starts_with(PRELUDE) && sys.layout.ends_with("OG-LAYOUT"));
+    assert!(sys.layout.starts_with(&prelude()) && sys.layout.contains("OG-LAYOUT\nkigae.done();"));
     let FileState::Content(settings) = &sys.files[std::path::Path::new("/h/.config/Code/User/settings.json")] else { panic!() };
     assert!(settings.contains("\"Catppuccin Mocha\"") && settings.contains("// mine"), "{settings}");
     assert!(!settings.contains("autoDetectColorScheme"), "ukiyo's key goes with it: {settings}");
@@ -144,8 +145,26 @@ fn undo_puts_everything_back() {
     assert_eq!(sys.files, before.files);
     assert_eq!(sys.units, before.units);
     assert_eq!(sys.wallpaper, before.wallpaper);
-    assert_eq!(sys.layout, format!("{PRELUDE}\nUKIYO-LAYOUT"), "the dump from before, after the prelude");
+    assert_eq!(
+        sys.layout,
+        format!("{}UKIYO-LAYOUT\nlayout.desktops.forEach(function (d) {{ d.applets = []; }});\nplasma.loadSerializedLayout(layout);", prelude()),
+        "the dump from before, after the prelude, desktop widgets left to the second pass"
+    );
+    assert_eq!(sys.layout_state, before.layout_state, "tray settings and widget positions come back");
     assert_eq!(out.journal.status, Status::Undone);
+}
+
+#[test]
+fn declared_tray_settings_get_a_second_pass() {
+    let (ukiyo, og) = rices();
+    let mut sys = ukiyo_desktop();
+    let st = r#"{"trays":[{"General":{"hiddenItems":["b"]}}],"desk":[]}"#;
+    sys.script_output = vec![format!("KIGAE-STATE {st}\n")];
+    apply(&mut sys, &paths(), Some(&ukiyo), target(&og, "OG-LAYOUT"), opts()).unwrap();
+    let log = sys.log();
+    let i = log.iter().position(|a| a == "plasmashell script: prelude + layout of og").unwrap();
+    assert_eq!(log[i + 1], "plasmashell script: tray settings and desktop widget positions");
+    assert_eq!(sys.layout_state, st);
 }
 
 #[test]
@@ -158,7 +177,7 @@ fn critical_failure_rolls_back() {
     assert!(matches!(err, ApplyError::Critical { step: "style", ref rollback, .. } if rollback.is_empty()), "{err}");
     assert_eq!(sys.kconfig, before.kconfig);
     assert_eq!(sys.units, before.units);
-    assert_eq!(sys.layout, "UKIYO-LAYOUT", "never got to the layout");
+    assert_eq!(sys.layout, before.layout, "never got to the layout");
 }
 
 #[test]

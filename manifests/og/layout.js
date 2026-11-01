@@ -18,8 +18,7 @@ tasks.writeConfig("launchers", kigae.launchers);
 panel.addWidget("org.kde.plasma.marginsseparator");
 
 var tray = panel.addWidget("org.kde.plasma.systemtray");
-tray.currentConfigGroup = ["General"];
-tray.writeConfig("hiddenItems", ["Xwayland Video Bridge", "chrome_status_icon_1@brave", "org.kde.plasma.brightness"]);
+kigae.tray(tray, { General: { hiddenItems: ["Xwayland Video Bridge", "chrome_status_icon_1@brave", "org.kde.plasma.brightness"] } });
 
 var clock = panel.addWidget("org.kde.plasma.digitalclock");
 clock.currentConfigGroup = ["Appearance"];

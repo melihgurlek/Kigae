@@ -157,6 +157,10 @@ Kigae runs its prelude (`crates/kigae-core/src/prelude.js`) and then the rice's 
 
 - The prelude reads the launcher list of the first task manager into `kigae.launchers`. Then it removes **every** panel and every desktop widget, on all containments.
 - The rice script builds its panels from nothing and uses `kigae.launchers` for the dock.
+- Two things can't be done inside that script, so the rice declares them and Kigae applies them in a second call about 600 ms later:
+  - `kigae.tray(tray, {General: {hiddenItems: [...]}})`: Plasma drops tray settings written while the tray is being created.
+  - `kigae.desktop(type, x, y, w, h, config)`: the folder view only honours a position when the spot is free, and the prelude's removals don't finish within the same call.
+- Undo replays plasmashell's layout dump, plus a capture of what the dump leaves out (tray settings, desktop widgets with their positions and settings), applied through the same second pass.
 - Panel heights are set in the script, never inherited (a Plasma style changes panel padding). The script must run cleanly from any starting state.
 - Any number of panels works: the prelude clears them all, the script builds as many as it wants. `new Panel` lands on screen 0; a rice for several monitors sets `panel.screen` itself.
 - Kigae never edits `plasma-org.kde.plasma.desktop-appletsrc` while plasmashell is running, because that's the file plasmashell writes back on exit.

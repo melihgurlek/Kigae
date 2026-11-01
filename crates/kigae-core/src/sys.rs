@@ -46,7 +46,8 @@ pub enum Action {
     /// `kwriteconfig6`; `value: None` deletes the key.
     KWrite { file: String, groups: Vec<String>, key: String, value: Option<String>, boolean: bool },
     KWinReconfigure,
-    EvaluateScript { what: String, script: String },
+    /// A plasmashell script; `delay_ms` lets panels created by the previous script settle.
+    EvaluateScript { what: String, script: String, delay_ms: u64 },
     WriteFile { path: PathBuf, contents: String },
     Symlink { link: PathBuf, target: PathBuf },
     Remove(PathBuf),
@@ -98,11 +99,15 @@ pub trait Sys {
     fn unit_exists(&mut self, unit: &str) -> bool;
     /// `org.kde.PlasmaShell.dumpCurrentLayoutJS`: a script that rebuilds today's panels.
     fn dump_layout(&mut self) -> Result<String>;
+    /// What the layout dump leaves out (tray settings, desktop widget positions), as JSON for
+    /// `kigae.restore`.
+    fn capture_layout(&mut self) -> Result<String>;
     /// The first desktop's wallpaper image (a `file://` URL), if it uses `org.kde.image`.
     fn wallpaper(&mut self) -> Result<Option<String>>;
     /// Is the sun up, by Plasma's NightTime schedule.
     fn is_day(&mut self) -> Result<bool>;
-    fn act(&mut self, action: &Action) -> Result<()>;
+    /// Do it; returns what a plasmashell script printed (empty otherwise).
+    fn act(&mut self, action: &Action) -> Result<String>;
 }
 
 // ───────────────────────────── real ─────────────────────────────
@@ -239,6 +244,13 @@ impl Sys for RealSys {
         String::from_utf8(bytes).map_err(|e| SysError::DBus { call: "dumpCurrentLayoutJS", err: e.to_string() })
     }
 
+    fn capture_layout(&mut self) -> Result<String> {
+        let out = self.evaluate(&format!("{}\nkigae.capture();", crate::engine::HELPERS))?;
+        crate::engine::kigae_state(&out)
+            .map(str::to_string)
+            .ok_or_else(|| SysError::Command { cmd: "kigae.capture".into(), msg: out.trim().into() })
+    }
+
     fn wallpaper(&mut self) -> Result<Option<String>> {
         let out = self.evaluate(
             "var d = desktops()[0];\
@@ -299,7 +311,22 @@ impl Sys for RealSys {
         Ok(crate::daynight::is_day(now, &cycles))
     }
 
-    fn act(&mut self, action: &Action) -> Result<()> {
+    fn act(&mut self, action: &Action) -> Result<String> {
+        if let Action::EvaluateScript { script, delay_ms, .. } = action {
+            std::thread::sleep(std::time::Duration::from_millis(*delay_ms));
+            let out = self.evaluate(script)?;
+            // plasmashell reports script errors in the returned text, not as a D-Bus error
+            if out.contains("Error:") || out.contains("TypeError") || out.contains("ReferenceError") {
+                return Err(SysError::Command { cmd: "evaluateScript".into(), msg: out.trim().into() });
+            }
+            return Ok(out);
+        }
+        self.act_quiet(action).map(|()| String::new())
+    }
+}
+
+impl RealSys {
+    fn act_quiet(&mut self, action: &Action) -> Result<()> {
         match action {
             Action::Exec(argv) => {
                 let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
@@ -337,14 +364,7 @@ impl Sys for RealSys {
                     .map_err(err)?;
                 bus.send(&msg).map_err(err)
             }
-            Action::EvaluateScript { script, .. } => {
-                let out = self.evaluate(script)?;
-                // plasmashell reports script errors in the returned text, not as a D-Bus error
-                if out.contains("Error:") || out.contains("TypeError") || out.contains("ReferenceError") {
-                    return Err(SysError::Command { cmd: "evaluateScript".into(), msg: out.trim().into() });
-                }
-                Ok(())
-            }
+            Action::EvaluateScript { .. } => unreachable!("handled in act"),
             Action::WriteFile { path, contents } => {
                 if let Some(dir) = path.parent() {
                     fs::create_dir_all(dir).map_err(io_err(dir))?;
@@ -398,6 +418,12 @@ pub struct FakeSys {
     pub present: Vec<PathBuf>,
     pub units: BTreeMap<String, UnitState>,
     pub layout: String,
+    /// What `capture_layout` returns.
+    pub layout_state: String,
+    /// What the next scripts print, in order (then nothing).
+    pub script_output: Vec<String>,
+    /// Every script run, in order.
+    pub scripts: Vec<String>,
     pub wallpaper: Option<String>,
     pub day: bool,
     pub actions: Vec<Action>,
@@ -450,6 +476,10 @@ impl Sys for FakeSys {
         Ok(self.layout.clone())
     }
 
+    fn capture_layout(&mut self) -> Result<String> {
+        Ok(self.layout_state.clone())
+    }
+
     fn wallpaper(&mut self) -> Result<Option<String>> {
         Ok(self.wallpaper.clone())
     }
@@ -458,7 +488,7 @@ impl Sys for FakeSys {
         Ok(self.day)
     }
 
-    fn act(&mut self, action: &Action) -> Result<()> {
+    fn act(&mut self, action: &Action) -> Result<String> {
         if let Some(pat) = &self.fail_on
             && action.to_string().contains(pat.as_str())
         {
@@ -491,7 +521,14 @@ impl Sys for FakeSys {
                 }
             }
             Action::EvaluateScript { script, .. } => {
-                self.layout = script.clone();
+                self.scripts.push(script.clone());
+                // a settle script only restores tray/desktop state, it doesn't rebuild panels
+                if let Some(st) = script.split("kigae.restore(").nth(1) {
+                    self.layout_state = st.trim_end().trim_end_matches(");").to_string();
+                } else {
+                    self.layout = script.clone();
+                }
+                return Ok(if self.script_output.is_empty() { String::new() } else { self.script_output.remove(0) });
             }
             Action::WriteFile { path, contents } => {
                 self.files.insert(path.clone(), FileState::Content(contents.clone()));
@@ -513,7 +550,7 @@ impl Sys for FakeSys {
             }
             Action::Shell(_) | Action::KWinReconfigure | Action::ReloadKitty => {}
         }
-        Ok(())
+        Ok(String::new())
     }
 }
 
@@ -550,14 +587,17 @@ impl<S: Sys> Sys for DryRun<S> {
     fn dump_layout(&mut self) -> Result<String> {
         self.inner.dump_layout()
     }
+    fn capture_layout(&mut self) -> Result<String> {
+        self.inner.capture_layout()
+    }
     fn wallpaper(&mut self) -> Result<Option<String>> {
         self.inner.wallpaper()
     }
     fn is_day(&mut self) -> Result<bool> {
         self.inner.is_day()
     }
-    fn act(&mut self, action: &Action) -> Result<()> {
+    fn act(&mut self, action: &Action) -> Result<String> {
         self.actions.push(action.clone());
-        Ok(())
+        Ok(String::new())
     }
 }

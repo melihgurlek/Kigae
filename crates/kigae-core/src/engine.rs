@@ -7,9 +7,36 @@ use crate::journal::{Entry, Journal, Status};
 use crate::manifest::{Manifest, MoodKind, Unset, UnsetPolicy, kconfig_key, kconfig_value};
 use crate::sys::{Action, FileState, Sys, SysError};
 
+/// The `kigae` helpers every Kigae plasmashell script starts with (SPEC.md §5).
+pub const HELPERS: &str = include_str!("prelude.js");
+
 /// Runs before every rice layout: remembers the dock launchers in `kigae.launchers`, then
-/// clears every panel and desktop widget (SPEC.md §5).
-pub const PRELUDE: &str = include_str!("prelude.js");
+/// clears every panel and desktop widget.
+pub fn prelude() -> String {
+    format!("{HELPERS}\nkigae.clear();\n")
+}
+
+/// Panels need a moment before Plasma accepts tray settings written into them.
+const SETTLE_MS: u64 = 600;
+
+/// The JSON after `KIGAE-STATE ` in a script's output.
+pub fn kigae_state(out: &str) -> Option<&str> {
+    out.lines().find_map(|l| l.trim().strip_prefix("KIGAE-STATE ")).map(str::trim)
+}
+
+/// A `dumpCurrentLayoutJS` script that leaves desktop widgets out.
+fn without_desktop_widgets(dump: &str) -> String {
+    const LOAD: &str = "plasma.loadSerializedLayout(layout);";
+    dump.replacen(LOAD, &format!("layout.desktops.forEach(function (d) {{ d.applets = []; }});\n{LOAD}"), 1)
+}
+
+fn settle(state: &str) -> Action {
+    Action::EvaluateScript {
+        what: "tray settings and desktop widget positions".into(),
+        script: format!("{HELPERS}\nkigae.restore({state});"),
+        delay_ms: SETTLE_MS,
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Paths {
@@ -289,12 +316,17 @@ fn plasma_part<S: Sys>(r: &mut Run<'_, S>, want: Option<&str>, part: Part) -> Re
 }
 
 fn layout<S: Sys>(r: &mut Run<'_, S>, id: &str, js: &str) -> Result<(), ApplyError> {
+    let state = Some(r.sys.capture_layout()?);
     let script = r.sys.dump_layout()?;
-    r.record(Entry::Layout { script })?;
-    r.sys.act(&Action::EvaluateScript {
+    r.record(Entry::Layout { script, state })?;
+    let out = r.sys.act(&Action::EvaluateScript {
         what: format!("prelude + layout of {id}"),
-        script: format!("{PRELUDE}\n{js}"),
+        script: format!("{}{js}\nkigae.done();\n", prelude()),
+        delay_ms: 0,
     })?;
+    if let Some(state) = kigae_state(&out) {
+        r.sys.act(&settle(state))?;
+    }
     Ok(())
 }
 
@@ -411,10 +443,21 @@ pub fn undo_entries<S: Sys>(sys: &mut S, paths: &Paths, entries: &[Entry]) -> Ve
             Entry::Style { old } => tool(Part::Style, old),
             Entry::Icons { old } => tool(Part::Icons, old),
             Entry::Cursor { old } => tool(Part::Cursor, old),
-            Entry::Layout { script } => vec![Action::EvaluateScript {
-                what: "prelude + layout from before".into(),
-                script: format!("{PRELUDE}\n{script}"),
-            }],
+            Entry::Layout { script, state } => {
+                // with a captured state, desktop widgets come back from it (in place) rather
+                // than from the dump, which can't position them
+                let script = match state {
+                    Some(_) => without_desktop_widgets(script),
+                    None => script.clone(),
+                };
+                let mut v = vec![Action::EvaluateScript {
+                    what: "prelude + layout from before".into(),
+                    script: format!("{}{script}", prelude()),
+                    delay_ms: 0,
+                }];
+                v.extend(state.as_deref().map(settle));
+                v
+            }
             Entry::Wallpaper { old } => old
                 .iter()
                 .map(|u| Action::Exec(vec!["plasma-apply-wallpaperimage".into(), file_url_path(u).display().to_string()]))
