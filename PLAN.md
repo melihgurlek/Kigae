@@ -43,6 +43,15 @@ Later: `kigae capture <id> --mood light|dark` to fill `[daynight]` from two capt
 
 ## Phase 2: daemon + overlay
 
+**UI direction (decided 2026-11-01; replaces DESIGN.md's Alt-Tab strip and SPEC.md §7 where they differ): a wardrobe, not a task switcher.**
+- *Fitting room* (Meta+Shift+T): desktop dims and blurs; rices hang in a slow horizontal carousel with depth (selected card large and centred, neighbours smaller and turned). Card: screenshot, big kanji, name + tagline, palette swatches from the rice's colour scheme, ☀/☾ toggle for `[daynight]` rices.
+- *Try it on before you switch*: as the selection moves, the room crossfades to that rice's wallpaper and the overlay takes its accent colours.
+- Arrows / scroll / T move, Enter or click switches, Esc closes; a quick tap leaves it open.
+- *Stepping in*: the chosen card grows to fill the screen, Kigae applies everything behind it, then it dissolves into the live desktop.
+- *Drawer* (Tab or ⋯): capture this desktop (name, kanji, one button), a health badge per rice (doctor), switch history as a timeline with undo.
+- Motion 200–350 ms eased; honour reduced motion.
+
+
 - `kigae daemon` (zbus, `dev.kigae.Kigae`), `data/kigae.service`
 - The cxx-qt QML overlay: layer-shell, exclusive keyboard, KWin blur shim
 - `data/kigae-switch.desktop` (Meta+Shift+T → `kigae overlay`)
