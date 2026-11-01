@@ -39,7 +39,12 @@ the real barrier. `kigae capture <id>` reads the rice on screen into `manifests/
 - [x] Live test: captured Ukiyo as a new rice, switched og → captured: same panels, tray and clock; against the real Ukiyo only the timer, hook and layout rerun differ
 - [x] Values equal to `base.toml` are left out (it found the fonts, which og and Ukiyo share, so they moved to `base.toml`)
 
-Later: `kigae capture <id> --mood light|dark` to fill `[daynight]` from two captures.
+Follow-ups:
+- [ ] Notification popup position: own `plasmanotifyrc` in Ukiyo's `rice.toml`, and add it to capture's look keys
+- [ ] `kigae capture <id> --mood light|dark`: fill `[daynight]` from two captures
+- [ ] Unlinked app themes: when kitty's theme is a plain file, capture copies it next to the manifest and adds the link itself (today it only prints a note)
+- [ ] Desktop widgets on every screen, not just the first (capture and the second layout pass)
+- [ ] Small: exit quietly on a broken pipe (`kigae … | head`)
 
 ## Phase 2: daemon + overlay
 
