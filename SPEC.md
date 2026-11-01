@@ -30,15 +30,15 @@ kigae (one binary)
 
 ## 2. Where rices come from
 
-- `~/.config/kigae/config.toml`:
+- `~/.config/kigae/config.toml` (all keys optional; these are the defaults):
   ```toml
-  repo = "~/Code/dotfiles"
-  branches = ["rice/*", "backup/og"]
-  manifests = "~/Code/Kigae/manifests"
+  repo = "~/dotfiles"      # one branch per rice
+  branches = ["rice/*"]    # a trailing * matches any rest
+  # manifests = "~/.config/kigae/manifests"
   ```
-- Lookup order for each rice: `git show <branch>:rice.toml`, then `<manifests>/<id>.toml`. Local manifests are for branches that must stay untouched: `backup/og` is a restore point, so og's manifest lives here as `manifests/og.toml` with `branch = "backup/og"`.
-- The rice id is the last part of the branch name (`rice/ukiyo` → `ukiyo`), with `og` for `backup/og`.
+- Lookup order for each rice: `git show <branch>:rice.toml`, then the manifests folder (for rices whose branch you'd rather not touch, or that have no branch). A local manifest names its branch with `branch = "…"`, and its `./…` paths resolve next to it.
 - Previews are read with `git show <branch>:<preview>` and cached at `~/.cache/kigae/previews/<id>-<blob-sha>.jpg`. Nothing is ever checked out, so the repo can stay on any branch.
+- `~/.config/kigae` can itself be a branch of the dotfiles repo, checked out as a git worktree. Then `config.toml`, `base.toml` and the manifests are versioned like any other dotfile and readable whatever rice branch is checked out (vortex does this: branch `kigae`, with og's manifest, since `backup/og` stays untouched).
 
 ## 3. Manifest (`rice.toml`)
 

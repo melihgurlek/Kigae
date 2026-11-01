@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use kigae_core::config::{Config, load_base};
+use kigae_core::config::{Config, config_dir, load_base};
 use kigae_core::discover::{Rice, discover};
 use kigae_core::engine::{self, Opts, Paths, Target};
 use kigae_core::journal::{Journal, Status};
@@ -128,11 +128,11 @@ fn ctx() -> Res<Ctx> {
     let paths = Paths::from_env().ok_or("HOME is not set")?;
     let cfg = Config::load().map_err(|e| e.to_string())?;
     let base = load_base().map_err(|e| e.to_string())?;
-    let (rices, warnings) = discover(&paths.expand(&cfg.repo), &cfg.branches, &paths.expand(&cfg.manifests));
+    let manifests = cfg.manifests_dir().map(|m| paths.expand(&m)).unwrap_or_else(|| config_dir().join("manifests"));
+    let (rices, warnings) = discover(&paths.expand(&cfg.repo), &cfg.branches, &manifests);
     for w in warnings {
         eprintln!("kigae: warning: {w}");
     }
-    let manifests = paths.expand(&cfg.manifests);
     Ok(Ctx { paths, manifests, rices, base, policy: cfg.unset.policy() })
 }
 

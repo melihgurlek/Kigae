@@ -13,17 +13,17 @@ pub struct Config {
     pub repo: String,
     /// Branches to look at; a trailing `*` matches any rest.
     pub branches: Vec<String>,
-    /// Local manifests, for branches that must stay untouched.
-    pub manifests: String,
+    /// Manifests kept outside the rices' branches (default: `manifests/` next to this file).
+    pub manifests: Option<String>,
     pub unset: UnsetConfig,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
-            repo: "~/Code/dotfiles".into(),
-            branches: vec!["rice/*".into(), "backup/og".into()],
-            manifests: "~/Code/Kigae/manifests".into(),
+            repo: "~/dotfiles".into(),
+            branches: vec!["rice/*".into()],
+            manifests: None,
             unset: UnsetConfig::default(),
         }
     }
@@ -74,6 +74,10 @@ fn read(path: &PathBuf) -> Result<Option<String>, ConfigError> {
 }
 
 impl Config {
+    pub fn manifests_dir(&self) -> Option<String> {
+        self.manifests.clone()
+    }
+
     pub fn load() -> Result<Self, ConfigError> {
         let path = config_dir().join("config.toml");
         match read(&path)? {
@@ -101,7 +105,8 @@ mod tests {
         let c: Config = toml::from_str("[unset]\ndefault = \"stock\"\nvscode = \"keep\"").unwrap();
         let p = c.unset.policy();
         assert_eq!((p.kconfig, p.links, p.vscode), (Unset::Stock, Unset::Stock, Unset::Keep));
-        assert_eq!(c.repo, "~/Code/dotfiles");
+        assert_eq!(c.repo, "~/dotfiles");
+        assert_eq!(c.manifests, None);
     }
 
     #[test]

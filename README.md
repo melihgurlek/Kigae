@@ -16,15 +16,39 @@ undid ukiyo → og (29 changes)
 - `SPEC.md`: how it works: manifest format, apply order, undo, layout contract
 - `PLAN.md`: build phases (the Meta+Shift+T overlay is phase 2)
 
-## Build
+## Getting started
 
 ```
 cargo build --release && cp target/release/kigae ~/.local/bin/
 ```
 
+Kigae keeps its files in `~/.config/kigae`:
+
+```
+~/.config/kigae/
+├── config.toml      where your rices are
+├── base.toml        what applies under every rice (fonts, say), optional
+└── manifests/       rices described here instead of on their own branch
+```
+
+A minimal `config.toml`:
+
+```toml
+repo = "~/dotfiles"      # one branch per rice (the default)
+branches = ["rice/*"]    # which branches are rices (the default)
+```
+
+Then either give a rice branch a `rice.toml`, or put the rice on screen and run `kigae capture <id>`.
+
+**Tip:** make `~/.config/kigae` a branch of your dotfiles, so it's versioned with everything else and readable whichever rice branch is checked out:
+
+```
+git -C ~/dotfiles worktree add --orphan -b kigae ~/.config/kigae
+```
+
 ## A rice
 
-A rice is a branch in your dotfiles repo with a `rice.toml` at its root (`SPEC.md` §3), or a manifest in `manifests/` for branches that stay untouched. Kigae reads both from git, so nothing gets checked out.
+A rice is a branch in your dotfiles repo with a `rice.toml` at its root (`SPEC.md` §3), or a manifest in `~/.config/kigae/manifests/` for branches you'd rather not touch. Kigae reads both from git, so nothing gets checked out.
 
 The shared base files each point at one link that Kigae owns:
 
