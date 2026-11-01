@@ -1,0 +1,15 @@
+[package]
+name = "kigae"
+description = "Live rice switcher for KDE Plasma"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+daemon = []
+overlay = ["daemon"]   # cxx-qt + QML, needs the Qt devel packages (phase 2)
+
+[dependencies]
+kigae-core.workspace = true
+clap.workspace = true
