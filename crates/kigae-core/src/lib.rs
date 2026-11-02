@@ -8,6 +8,7 @@ pub mod discover;
 pub mod engine;
 pub mod install;
 pub mod journal;
+pub mod kconfig;
 pub mod manifest;
 pub mod sys;
 pub mod vscode;

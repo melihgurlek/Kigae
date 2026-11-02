@@ -10,7 +10,7 @@ use kigae_core::discover::{Rice, discover};
 use kigae_core::engine::{self, Opts, Paths, Target};
 use kigae_core::journal::{Journal, Status};
 use kigae_core::manifest::{Manifest, MoodKind, UnsetPolicy};
-use kigae_core::sys::{Action, DryRun, FileState, RealSys, Sys};
+use kigae_core::sys::{Action, DryRun, FileState, RealSys, Sys, Traced};
 use kigae_core::card;
 use kigae_core::install;
 use kigae_core::capture;
@@ -275,7 +275,12 @@ fn apply(id: &str, dry_run: bool, mood: Option<Mood>, from: Option<&str>, force:
         return Ok(());
     }
     let _lock = lock()?;
-    let out = engine::apply(&mut real, &c.paths, from_m.as_ref(), target, opts).map_err(|e| e.to_string())?;
+    let out = if std::env::var_os("KIGAE_TRACE").is_some() {
+        engine::apply(&mut Traced::new(real), &c.paths, from_m.as_ref(), target, opts)
+    } else {
+        engine::apply(&mut real, &c.paths, from_m.as_ref(), target, opts)
+    }
+    .map_err(|e| e.to_string())?;
     println!("{from_label} → {id}{}: {} changes", mood_label(out.mood), out.journal.entries.len());
     for w in &out.warnings {
         eprintln!("kigae: warning: {w}");
