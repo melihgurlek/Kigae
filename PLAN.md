@@ -57,10 +57,21 @@ Follow-ups:
 - Motion 200–350 ms eased; honour reduced motion.
 
 
-- `kigae daemon` (zbus, `dev.kigae.Kigae`), `data/kigae.service`
-- The cxx-qt QML overlay: layer-shell, exclusive keyboard, KWin blur shim
-- `data/kigae-switch.desktop` (Meta+Shift+T → `kigae overlay`)
-- Spike: when the overlay has focus, do T taps arrive as key events or as shortcut presses?
+Done (2026-11-02, branch `phase2-overlay`):
+- [x] `kigae daemon`: owns `dev.kigae.Kigae` (zbus, one method `Show()`), runs Qt + `qml/Overlay.qml` through cxx-qt 0.10 (feature `overlay`, on by default; `--no-default-features` = CLI only)
+- [x] `kigae overlay` calls `Show()`; a second `Show()` while open moves to the next card (120 ms debounce)
+- [x] `kigae-core::card`: per-rice card data (palette from the `.colors` file, light/dark looks, wallpaper, preview cached from git at `~/.cache/kigae/previews/`)
+- [x] Fitting room renders on the live desktop (layer-shell Overlay, exclusive keyboard): blurred + dimmed wallpaper of the selected look, carousel with depth, hanging kanji tag in the rice's most vivid colour, band in the rice's own window/text colours, swatches, ☀/☾ pills, "wearing now" and "needs install" badges, key hints
+- [x] Written but **not yet tried live**: arrows/T/scroll/click navigation, ↑↓ mood, Enter/Space/Meta-release wears, stepping-in veil (card grows to the target wallpaper, apply on a thread, dissolve), error toast with Undo, Tab drawer (history + undo, health, capture hint), reduced motion via `AnimationDurationFactor`
+- Blur is QML `MultiEffect` on the wallpaper, not KWin blur behind: no C++ shim needed
+
+Next (pick up here):
+- [ ] Live test by hand: Meta+Shift+T hold → T → release wears; quick tap → browse mode; Esc changes nothing; stepping-in looks smooth (no panel flicker)
+- [ ] `data/kigae.service` (systemd user), `data/dev.kigae.Kigae.service` (D-Bus activation → systemd), `data/kigae-switch.desktop` with `X-KDE-Shortcuts=Meta+Shift+T` (free on vortex), and a `kigae setup` or README step that installs them; `cargo install --path crates/kigae`
+- [ ] Qt logs go to journald (`journalctl --user -t kigae`); a QML load error leaves the daemon running with no window: exit instead
+- [ ] Silence the GCC 16 `-Wsfinae-incomplete` noise from Qt headers in the cxx-qt build
+- [ ] Capture from the drawer (name + kanji + one button) instead of the command hint
+- [ ] SPEC.md §7–8: rewrite to match (wardrobe UI, D-Bus is only `Show()`, the CLI keeps the lock file instead of routing apply through the daemon)
 
 ## Phase 3: Catppuccin + previews
 

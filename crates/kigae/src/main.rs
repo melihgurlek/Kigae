@@ -14,6 +14,9 @@ use kigae_core::sys::{DryRun, FileState, RealSys, Sys};
 use kigae_core::install;
 use kigae_core::capture;
 
+#[cfg(feature = "overlay")]
+mod overlay;
+
 #[derive(Parser)]
 #[command(version, about = "Live rice switcher for KDE Plasma")]
 struct Cli {
@@ -184,7 +187,12 @@ fn main() -> ExitCode {
             capture_cmd(capture::Info { id, name, kanji, tagline, branch }, dry_run, force)
         }
         Command::Doctor { ids } => doctor(&ids),
-        Command::Daemon | Command::Overlay => Err("not built yet (phase 2 in PLAN.md)".into()),
+        #[cfg(feature = "overlay")]
+        Command::Daemon => overlay::run(),
+        #[cfg(feature = "overlay")]
+        Command::Overlay => overlay::show(),
+        #[cfg(not(feature = "overlay"))]
+        Command::Daemon | Command::Overlay => Err("built without the overlay feature".into()),
         Command::Shoot { .. } => Err("not built yet (phase 3 in PLAN.md)".into()),
         Command::Deep { .. } => Err("not built yet (phase 4 in PLAN.md)".into()),
     };
@@ -262,6 +270,24 @@ fn apply(id: &str, dry_run: bool, mood: Option<Mood>, from: Option<&str>, force:
         eprintln!("kigae: warning: {w}");
     }
     Ok(())
+}
+
+/// Switch to `id` for the overlay: no dry run, no `--force`, the rice on screen as `from`.
+#[cfg(feature = "overlay")]
+fn switch(id: &str, mood: Option<MoodKind>) -> Res<engine::Outcome> {
+    let c = ctx()?;
+    let mut real = RealSys::new();
+    let to = c.rice(id)?;
+    let problems = engine::doctor(&mut real, &c.paths, &c.effective(&to.manifest));
+    if !problems.is_empty() {
+        return Err(format!("{} isn't ready: {}", to.manifest.name, problems.join("; ")));
+    }
+    let from_m = c.current(&mut real).map(|(r, _)| c.effective(&r.manifest));
+    let to_m = c.effective(&to.manifest);
+    let layout_js = to.layout_js().map_err(|e| e.to_string())?;
+    let opts = Opts { mood, unset: c.policy, ..Opts::default() };
+    let _lock = lock()?;
+    engine::apply(&mut real, &c.paths, from_m.as_ref(), Target { manifest: &to_m, layout_js }, opts).map_err(|e| e.to_string())
 }
 
 fn mood_label(m: Option<MoodKind>) -> String {
