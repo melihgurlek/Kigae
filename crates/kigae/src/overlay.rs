@@ -201,7 +201,7 @@ fn state() -> Res<String> {
         .map(|j| {
             let name = |id: &str| names.get(id).copied().unwrap_or(id).to_string();
             json!({
-                "ts": j.ts,
+                "ts": j.when_secs(),
                 "from": j.from.as_deref().map(name),
                 "to": name(&j.to),
                 "mood": j.mood,
