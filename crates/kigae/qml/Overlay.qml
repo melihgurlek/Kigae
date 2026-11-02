@@ -538,7 +538,7 @@ Window {
         SequentialAnimation {
             id: dissolve
             NumberAnimation { target: veil; property: "t"; to: 1; duration: win.dur(120) }
-            PauseAnimation { duration: Math.max(150, win.dur(400)) }   // let plasmashell settle under the veil
+            PauseAnimation { duration: Math.max(100, win.dur(200)) }   // the tray pass already waited for the panels
             ScriptAction { script: { room.opacity = 0; rail.opacity = 0 } }
             NumberAnimation { target: veil; property: "opacity"; to: 0; duration: win.dur(450); easing.type: Easing.InOutQuad }
             ScriptAction { script: { win.visible = false; win.stepping = false; veil.visible = false } }
