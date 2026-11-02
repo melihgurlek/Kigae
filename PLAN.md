@@ -78,9 +78,9 @@ Next (pick up here):
 - [ ] Capture from the drawer (name + kanji + one button) instead of the command hint
 - [x] SPEC.md §1, §7–8 rewritten to match (wardrobe UI, D-Bus is only `Show()`, every switch holds the lock file instead of routing apply through the daemon)
 
-## Phase 3: Catppuccin + previews
+## Phase 3: previews ✅
 
-- Catppuccin: apply it the old way once, then `kigae capture catppuccin-mocha`
+- Catppuccin: dropped (2026-11-02), two rices are enough for now
 - [x] `kigae shoot`: wears each look of each rice, hides the windows (KWin Show Desktop), screenshots with spectacle, puts back what was on; cards show the selected look's shot. Live: 4 shots (Ukiyo and og, day and night) in 33 s, back on Ukiyo dark (2026-11-02)
 
 ## Phase 4: deep switch
