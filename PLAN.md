@@ -72,7 +72,7 @@ Next (pick up here):
 - [x] `kigae setup` run on vortex: service active, Meta+Shift+T bound (kglobalaccel picks up `X-KDE-Shortcuts` from the desktop file by itself)
 - [x] Logs: the unit sets `SyslogIdentifier=kigae`, so `journalctl --user -t kigae`; a QML load error makes the daemon exit instead of running windowless
 - [x] GCC 16 `-Wsfinae-incomplete` noise silenced in the cxx-qt build
-- [ ] og's dock shows an unknown-application (folder) icon: not found yet; every launcher in `kigae.launchers` has a Papirus icon. Needs a look at og live
+- [x] og's dock showed a "?" instead of its launchers: the prelude carried them as one comma-joined string, so the new dock had a single launcher that doesn't exist until plasmashell restarts. It now passes a list; checked live on og and Ukiyo (2026-11-02)
 - [x] Ukiyo's card has ☀/☾: `[daynight]` on `rice/ukiyo` (UkiyoPaper + daylight print / Ukiyo + night print); the hook is `ukiyo-sky --remember`, so the timer takes over without undoing a look picked against the sun (2026-11-02)
 - [x] Day/night is automatic by default: the card's toggle is ☀ / auto / ☾ (auto = the look for now); the daemon checks NightTime every minute and at sunrise/sunset re-applies the active rice's look, so a hand pick holds until then (og included, no more `kigae mood` by hand). Mood switches now run the rice's hooks too (ukiyo-sky --remember keeps the dawn print). Not yet seen live at a real sunrise/sunset
 - [ ] Capture from the drawer (name + kanji + one button) instead of the command hint
