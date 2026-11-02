@@ -40,12 +40,6 @@ Window {
     property var moods: ({})            // id → "light" | "auto" | "dark", picked on the card
     property bool drawer: false
     property bool stepping: false       // the chosen card is filling the screen
-    property bool holding: false        // opened with Meta held: letting go wears
-    // Once we have the keyboard, ask whether Meta is really down: a quick tap means browsing.
-    // Until then assume a hold, so a release that beats the check still wears.
-    onActiveChanged: if (active && visible && !stepping) holdCheck.restart()
-    Timer { id: holdCheck; interval: 40; onTriggered: if (win.holding && !kigae.metaHeld()) win.holding = false }
-    property bool metaSeen: false
     property double shownAt: 0
     property string error: ""
 
@@ -102,8 +96,6 @@ Window {
         drawer = false
         stepping = false
         error = ""
-        metaSeen = false
-        holding = true                                // until we learn otherwise
         shownAt = Date.now()
         room.opacity = 0
         rail.opacity = 0
@@ -361,13 +353,7 @@ Window {
         spacing: 30
         opacity: rail.opacity * (win.stepping ? 0 : 0.85)
         Repeater {
-            // holding Meta+Shift, KWin keeps ← → (window to screen), so the hold has its own keys
-            model: win.holding ? [
-                { k: "T", t: "next" },
-                { k: "↑ ↓", t: "day · auto · night", dn: true },
-                { k: "let go", t: "wear" },
-                { k: "esc", t: "leave" },
-            ] : [
+            model: [
                 { k: "← →", t: "choose" },
                 { k: "↑ ↓", t: "day · auto · night", dn: true },
                 { k: "⏎", t: "wear" },
@@ -606,8 +592,6 @@ Window {
         id: keys
         focus: true
         Keys.onPressed: e => {
-            const meta = e.key === Qt.Key_Meta || e.key === Qt.Key_Super_L || e.key === Qt.Key_Super_R
-            if (meta) { win.metaSeen = true; return }
             switch (e.key) {
             case Qt.Key_Escape:
                 if (win.drawer) win.drawer = false
@@ -626,23 +610,13 @@ Window {
             case Qt.Key_Down: case Qt.Key_J:
                 if (win.selCard && win.selCard.daynight) win.nudge(win.selCard, 1); break
             case Qt.Key_Tab: case Qt.Key_Menu:
-                win.drawer = !win.drawer
-                win.holding = false                       // browsing now: Meta's release won't wear
-                break
+                win.drawer = !win.drawer; break
             case Qt.Key_Return: case Qt.Key_Enter: case Qt.Key_Space:
                 win.wear(); break
             default:
                 return
             }
             e.accepted = true
-        }
-        Keys.onReleased: e => {
-            const meta = e.key === Qt.Key_Meta || e.key === Qt.Key_Super_L || e.key === Qt.Key_Super_R
-            // Meta was held when we opened and is let go now: wear what's selected, look picks
-            // included (Alt-Tab style). If Meta was already up when we got focus, no release comes
-            // and we stay open. With the drawer open, letting go just leaves the room open.
-            if (meta && win.holding && !win.metaSeen && !win.drawer && !e.isAutoRepeat) win.wear()
-            if (meta && !e.isAutoRepeat) win.holding = false     // a failed wear leaves it open: browse
         }
     }
 }
