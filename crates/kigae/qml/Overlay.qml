@@ -128,7 +128,8 @@ Window {
             return
         }
         const mood = pickOf(c) === "auto" ? "" : pickOf(c)
-        if (c.id === st.current && (!c.daynight || mood === "")) { close(); return }
+        // already wearing it: only a different look is a change (auto = the look for now)
+        if (c.id === st.current && (!c.daynight || (mood || st.mood) === st.worn)) { close(); return }
         error = ""
         stepping = true
         const r = rail.itemAt(sel)

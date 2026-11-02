@@ -282,7 +282,8 @@ fn apply(id: &str, dry_run: bool, mood: Option<Mood>, from: Option<&str>, force:
     Ok(())
 }
 
-/// Switch to `id` for the overlay: no dry run, no `--force`, the rice on screen as `from`.
+/// Switch to `id` for the overlay: no dry run, no `--force`, the rice on screen as `from`. The rice
+/// already on screen only changes its day/night look, like `kigae mood`.
 #[cfg(feature = "overlay")]
 fn switch(id: &str, mood: Option<MoodKind>) -> Res<engine::Outcome> {
     let c = ctx()?;
@@ -292,10 +293,12 @@ fn switch(id: &str, mood: Option<MoodKind>) -> Res<engine::Outcome> {
     if !problems.is_empty() {
         return Err(format!("{} isn't ready: {}", to.manifest.name, problems.join("; ")));
     }
-    let from_m = c.current(&mut real).map(|(r, _)| c.effective(&r.manifest));
+    let from = c.current(&mut real).map(|(r, _)| r);
+    let only_mood = from.is_some_and(|r| r.id() == to.id());
+    let from_m = from.map(|r| c.effective(&r.manifest));
     let to_m = c.effective(&to.manifest);
-    let layout_js = to.layout_js().map_err(|e| e.to_string())?;
-    let opts = Opts { mood, unset: c.policy, ..Opts::default() };
+    let layout_js = if only_mood { None } else { to.layout_js().map_err(|e| e.to_string())? };
+    let opts = Opts { mood, only_mood, unset: c.policy, ..Opts::default() };
     let _lock = lock()?;
     engine::apply(&mut real, &c.paths, from_m.as_ref(), Target { manifest: &to_m, layout_js }, opts).map_err(|e| e.to_string())
 }

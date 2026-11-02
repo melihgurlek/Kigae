@@ -187,8 +187,13 @@ fn state() -> Res<String> {
         .unwrap_or(1.0);
     let names: std::collections::HashMap<&str, &str> =
         c.rices.iter().map(|r| (r.id(), r.manifest.name.as_str())).collect();
-    let history: Vec<_> = Journal::list(&c.paths.undo_dir())
-        .unwrap_or_default()
+    let journals = Journal::list(&c.paths.undo_dir()).unwrap_or_default();
+    // the look the active rice wears, when the last switch says so for sure
+    let worn = journals
+        .last()
+        .filter(|j| j.status == Status::Done && Some(&j.to) == current.as_ref())
+        .and_then(|j| j.mood.clone());
+    let history: Vec<_> = journals
         .iter()
         .rev()
         .filter(|j| !j.entries.is_empty())
@@ -204,7 +209,7 @@ fn state() -> Res<String> {
             })
         })
         .collect();
-    Ok(json!({ "cards": cards, "current": current, "mood": if day { "light" } else { "dark" }, "anim": anim, "history": history })
+    Ok(json!({ "cards": cards, "current": current, "worn": worn, "mood": if day { "light" } else { "dark" }, "anim": anim, "history": history })
         .to_string())
 }
 
