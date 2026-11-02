@@ -155,13 +155,21 @@ impl RealSys {
     where
         B: serde::Serialize + zbus::zvariant::DynamicType,
     {
+        self.noreply(call, "/KWin", "org.kde.KWin", "org.kde.KWin", method, body)
+    }
+
+    /// Send a method call without waiting for the answer.
+    fn noreply<B>(&mut self, call: &'static str, path: &'static str, dest: &'static str, iface: &'static str, method: &'static str, body: &B) -> Result<()>
+    where
+        B: serde::Serialize + zbus::zvariant::DynamicType,
+    {
         let bus = self.bus(call)?;
         let err = |e: zbus::Error| SysError::DBus { call, err: e.to_string() };
-        let msg = zbus::message::Message::method_call("/KWin", method)
+        let msg = zbus::message::Message::method_call(path, method)
             .map_err(err)?
-            .destination("org.kde.KWin")
+            .destination(dest)
             .map_err(err)?
-            .interface("org.kde.KWin")
+            .interface(iface)
             .map_err(err)?
             .with_flags(zbus::message::Flags::NoReplyExpected)
             .map_err(err)?
@@ -461,8 +469,9 @@ impl RealSys {
                 Err(e) if e.kind() != io::ErrorKind::NotFound => Err(io_err(path)(e)),
                 _ => Ok(()),
             },
-            // Over D-Bus, without the daemon-reload `systemctl enable` does (~700 ms): the
-            // [Install] links only matter at the next login, and start/stop act right away.
+            // Over D-Bus, without waiting for the daemon-reload `systemctl enable` does
+            // (~700 ms): start/stop act right away, and the reload, sent last, catches systemd up
+            // on the [Install] links in the background.
             Action::Unit { unit, enable, active } => {
                 match enable {
                     Some(true) => {
@@ -478,6 +487,9 @@ impl RealSys {
                 if let Some(a) = active {
                     let method = if *a { "StartUnit" } else { "StopUnit" };
                     let _: zbus::zvariant::OwnedObjectPath = self.systemd(method, &(unit.as_str(), "replace"))?;
+                }
+                if enable.is_some() {
+                    self.noreply("systemd Reload", "/org/freedesktop/systemd1", "org.freedesktop.systemd1", "org.freedesktop.systemd1.Manager", "Reload", &())?;
                 }
                 Ok(())
             }
