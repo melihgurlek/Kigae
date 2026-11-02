@@ -8,7 +8,8 @@ Item {
 
     required property var card
     required property var look          // card.light or card.dark
-    required property string mood       // "light" | "dark"
+    required property string mood       // "light" | "dark": the look shown
+    required property string pick       // "light" | "auto" | "dark": what the toggle says
     required property bool current      // the rice on screen now
     required property bool selected
     required property color accent      // the rice's most vivid colour
@@ -146,11 +147,11 @@ Item {
                     visible: root.card.daynight
                     spacing: 4 * root.u
                     Repeater {
-                        model: [{ m: "light", g: "☀", t: "day" }, { m: "dark", g: "☾", t: "night" }]
+                        model: [{ m: "light", g: "☀", t: "day" }, { m: "auto", g: "◐", t: "auto" }, { m: "dark", g: "☾", t: "night" }]
                         Rectangle {
                             id: pill
                             required property var modelData
-                            readonly property bool on: root.mood === modelData.m
+                            readonly property bool on: root.pick === modelData.m
                             width: pillText.implicitWidth + 24 * root.u
                             height: 30 * root.u
                             radius: height / 2

@@ -173,11 +173,10 @@ pub fn apply<S: Sys>(
         ("links", false, Box::new(|r| if full { links(r, paths, from, m, opts.unset.links) } else { Ok(()) })),
         ("vscode", false, Box::new(|r| if full { vscode(r, paths, from, m, opts.unset.vscode) } else { Ok(()) })),
         ("services-start", false, Box::new(|r| if full { services_start(r, m) } else { Ok(()) })),
+        // after a mood change too: a rice's own timer (ukiyo-sky) takes over from the new look
         ("hooks", false, Box::new(|r| {
-            if full {
-                for cmd in &m.hooks.after {
-                    r.sys.act(&Action::Shell(cmd.clone()))?;
-                }
+            for cmd in &m.hooks.after {
+                r.sys.act(&Action::Shell(cmd.clone()))?;
             }
             Ok(())
         })),

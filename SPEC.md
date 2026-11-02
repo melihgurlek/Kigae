@@ -178,7 +178,7 @@ Kigae runs its prelude (`crates/kigae-core/src/prelude.js`) and then the rice's 
 
 ## 6. Day/night
 
-- If the active rice has `[daynight]`, the daemon subscribes to `org.kde.NightTime`'s schedule. At each transition it re-applies only the `light` or `dark` parts: no layout, no services.
+- If the active rice has `[daynight]`, the daemon checks `org.kde.NightTime`'s schedule every minute. When day turns to night or back, it re-applies only the `light` or `dark` parts (no layout, no services; the rice's hooks do run, so a timer like ukiyo-sky can take over). A look picked by hand in the overlay (☀ or ☾ instead of auto) holds until that next turn.
 - When the daemon isn't running, `kigae apply` picks the right half for the current time from the same schedule, and `kigae mood [light|dark]` re-applies just the mood parts of the active rice.
 - `AutomaticLookAndFeel` is forced to `false`, and that change is part of the first snapshot. Plasma's own look-and-feel switch resets too much.
 

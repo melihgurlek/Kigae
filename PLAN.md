@@ -20,7 +20,7 @@ The design is in `SPEC.md`. Each phase ends with something that works on the rea
 - [x] Base files point at Kigae links: kitty `include kigae-current.conf`, `.zshrc` → `~/.config/kigae/p10k.zsh`, nvim `plugins/kigae.lua`; `ukiyo-sky --force`
 - [x] Spike: 10 live switches Ukiyo ⇄ og with no plasmashell restart (3–7 s each), launchers kept, two undos walk back cleanly
 
-Left for later: a `day/night` timer for og until the daemon exists (`kigae mood` works by hand).
+The daemon follows the sun since 2026-11-02 (phase 2).
 
 ## Phase 1b: `kigae capture`, so any rice can be switched ✅ (2026-11-01)
 
@@ -72,6 +72,7 @@ Next (pick up here):
 - [ ] Silence the GCC 16 `-Wsfinae-incomplete` noise from Qt headers in the cxx-qt build
 - [ ] og's dock shows an unknown-application (folder) icon: not found yet; every launcher in `kigae.launchers` has a Papirus icon. Needs a look at og live
 - [x] Ukiyo's card has ☀/☾: `[daynight]` on `rice/ukiyo` (UkiyoPaper + daylight print / Ukiyo + night print); the hook is `ukiyo-sky --remember`, so the timer takes over without undoing a look picked against the sun (2026-11-02)
+- [x] Day/night is automatic by default: the card's toggle is ☀ / auto / ☾ (auto = the look for now); the daemon checks NightTime every minute and at sunrise/sunset re-applies the active rice's look, so a hand pick holds until then (og included, no more `kigae mood` by hand). Mood switches now run the rice's hooks too (ukiyo-sky --remember keeps the dawn print). Not yet seen live at a real sunrise/sunset
 - [ ] Capture from the drawer (name + kanji + one button) instead of the command hint
 - [ ] SPEC.md §7–8: rewrite to match (wardrobe UI, D-Bus is only `Show()`, the CLI keeps the lock file instead of routing apply through the daemon)
 
