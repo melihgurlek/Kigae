@@ -99,7 +99,10 @@ var kigae = {
             p.widgets().forEach(function (w) {
                 if (!self.launchers && (w.type == "org.kde.plasma.icontasks" || w.type == "org.kde.plasma.taskmanager")) {
                     w.currentConfigGroup = ["General"];
-                    self.launchers = w.readConfig("launchers", "");
+                    // a list: written back as one string, the dock reads a single launcher that
+                    // doesn't exist (a "?" icon) until plasmashell restarts
+                    var l = w.readConfig("launchers", "");
+                    self.launchers = typeof l == "string" ? l.split(",").filter(function (u) { return u; }) : l;
                 }
             });
         });
