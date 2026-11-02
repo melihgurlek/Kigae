@@ -6,11 +6,19 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = []
-daemon = []
-overlay = ["daemon"]   # cxx-qt + QML, needs the Qt devel packages (phase 2)
+default = ["overlay"]
+# `kigae daemon` + the QML overlay: cxx-qt, needs qt6-qtdeclarative-devel and layer-shell-qt.
+# `--no-default-features` builds the CLI alone.
+overlay = ["dep:cxx-qt", "dep:cxx-qt-lib", "dep:cxx", "dep:cxx-qt-build", "dep:zbus"]
 
 [dependencies]
 kigae-core.workspace = true
 clap.workspace = true
 serde_json = "1.0.154"
+cxx-qt = { version = "0.10", optional = true }
+cxx-qt-lib = { version = "0.10", optional = true, features = ["qt_gui", "qt_qml"] }
+cxx = { version = "1", optional = true }
+zbus = { version = "5", optional = true }
+
+[build-dependencies]
+cxx-qt-build = { version = "0.10", optional = true }
