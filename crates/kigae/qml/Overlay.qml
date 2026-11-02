@@ -87,6 +87,8 @@ Window {
         setMood(c, order[Math.max(0, Math.min(2, order.indexOf(pickOf(c)) + d))])
     }
     readonly property var selLook: lookOf(selCard)
+    // the veil fills the screen: nothing behind it needs drawing
+    readonly property bool covered: veil.visible && veil.t >= 1 && veil.opacity >= 1
 
     // the room takes the rice's most vivid colour: its accent is often a muted selection grey
     function chroma(h) {
@@ -242,6 +244,7 @@ Window {
     // ── the room: the selected rice's wallpaper, blurred and dimmed ─────────────
     Item {
         id: room
+        visible: !win.covered                      // under the veil: don't draw it at all
         anchors.fill: parent
         opacity: 0
 
@@ -353,6 +356,7 @@ Window {
     // ── the rail ─────────────────────────────────────────────────────────────────
     Item {
         id: rail
+        visible: !win.covered
         anchors.fill: parent
         property real lift: 0
         opacity: 0
