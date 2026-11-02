@@ -24,7 +24,9 @@ Item {
     readonly property real imageH: width * 9 / 16
     readonly property real bandH: 132 * u
     readonly property real radius: 22 * u
-    readonly property string image: card.preview ? card.preview : (look && look.wallpaper ? look.wallpaper : "")
+    // the screenshot is of the night look; by day a day/night rice shows its day wallpaper
+    readonly property string wall: look && look.wallpaper ? look.wallpaper : ""
+    readonly property string image: card.preview && !(card.daynight && mood === "light") ? card.preview : wall
 
     implicitHeight: imageH + bandH
 
