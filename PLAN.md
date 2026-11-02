@@ -51,7 +51,7 @@ Follow-ups:
 **UI direction (decided 2026-11-01; replaces DESIGN.md's Alt-Tab strip and SPEC.md §7 where they differ): a wardrobe, not a task switcher.**
 - *Fitting room* (Meta+Shift+T): desktop dims and blurs; rices hang in a slow horizontal carousel with depth (selected card large and centred, neighbours smaller and turned). Card: screenshot, big kanji, name + tagline, palette swatches from the rice's colour scheme, ☀/☾ toggle for `[daynight]` rices.
 - *Try it on before you switch*: as the selection moves, the room crossfades to that rice's wallpaper and the overlay takes its accent colours.
-- Arrows / scroll / T move, Enter or click switches, Esc closes; a quick tap leaves it open.
+- Arrows / scroll / T move, Enter or click switches, Esc closes. (Wearing on Meta release was tried and dropped, 2026-11-02.)
 - *Stepping in*: the chosen card grows to fill the screen, Kigae applies everything behind it, then it dissolves into the live desktop.
 - *Drawer* (Tab or ⋯): capture this desktop (name, kanji, one button), a health badge per rice (doctor), switch history as a timeline with undo.
 - Motion 200–350 ms eased; honour reduced motion.
@@ -62,11 +62,12 @@ Done (2026-11-02, branch `phase2-overlay`):
 - [x] `kigae overlay` calls `Show()`; a second `Show()` while open moves to the next card (120 ms debounce)
 - [x] `kigae-core::card`: per-rice card data (palette from the `.colors` file, light/dark looks, wallpaper, preview cached from git at `~/.cache/kigae/previews/`)
 - [x] Fitting room renders on the live desktop (layer-shell Overlay, exclusive keyboard): blurred + dimmed wallpaper of the selected look, carousel with depth, hanging kanji tag in the rice's most vivid colour, band in the rice's own window/text colours, swatches, ☀/☾ pills, "wearing now" and "needs install" badges, key hints
-- [x] Written but **not yet tried live**: arrows/T/scroll/click navigation, ↑↓ mood, Enter/Space/Meta-release wears, stepping-in veil (card grows to the target wallpaper, apply on a thread, dissolve), error toast with Undo, Tab drawer (history + undo, health, capture hint), reduced motion via `AnimationDurationFactor`
+- [x] Written but **not yet tried live**: arrows/T/scroll/click navigation, ↑↓ mood, Enter/Space wears, stepping-in veil (card grows to the target wallpaper, apply on a thread, dissolve), error toast with Undo, Tab drawer (history + undo, health, capture hint), reduced motion via `AnimationDurationFactor`
 - Blur is QML `MultiEffect` on the wallpaper, not KWin blur behind: no C++ shim needed
 
 Next (pick up here):
-- [ ] Live test by hand: Meta+Shift+T hold → T → release wears; quick tap → browse mode; Esc changes nothing; stepping-in looks smooth (no panel flicker)
+- [x] Live (2026-11-02): Meta+Shift+T opens it and wearing works. Wearing on Meta release dropped: a tap wore instantly and two modes nobody could see were confusing; Enter wears, Esc leaves
+- [ ] Live test by hand: Esc changes nothing; stepping-in looks smooth (no panel flicker)
 - [x] `data/kigae.service` (systemd user, `Type=dbus`, starts with the graphical session), `data/dev.kigae.Kigae.service` (D-Bus activation → systemd), `data/kigae-switch.desktop`; `kigae setup` writes them with the binary's path, enables the unit and binds Meta+Shift+T through kglobalaccel (refuses if it's taken); `kigae setup --remove` undoes it (2026-11-02)
 - [x] `kigae setup` run on vortex: service active, Meta+Shift+T bound (kglobalaccel picks up `X-KDE-Shortcuts` from the desktop file by itself)
 - [x] Logs: the unit sets `SyslogIdentifier=kigae`, so `journalctl --user -t kigae`; a QML load error makes the daemon exit instead of running windowless
@@ -100,6 +101,6 @@ Next (pick up here):
   - `AutomaticLookAndFeel` stays `false`.
   - `kigae undo` brings back the previous state.
 - **Live, phase 2**:
-  - Meta+Shift+T, then T twice, then let go: the third rice is applied.
-  - A quick tap lands in browse mode, and Esc changes nothing.
+  - Meta+Shift+T, → twice, Enter: the third rice is applied; letting go of the keys changes nothing.
+  - Esc changes nothing.
   - No panels flicker during the crossfade.
