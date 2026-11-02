@@ -75,7 +75,7 @@ Next (pick up here):
 - [x] Ukiyo's card has ☀/☾: `[daynight]` on `rice/ukiyo` (UkiyoPaper + daylight print / Ukiyo + night print); the hook is `ukiyo-sky --remember`, so the timer takes over without undoing a look picked against the sun (2026-11-02)
 - [x] Day/night is automatic by default: the card's toggle is ☀ / auto / ☾ (auto = the look for now); the daemon checks NightTime every minute and at sunrise/sunset re-applies the active rice's look, so a hand pick holds until then (og included, no more `kigae mood` by hand). Mood switches now run the rice's hooks too (ukiyo-sky --remember keeps the dawn print). Not yet seen live at a real sunrise/sunset
 - [ ] Capture from the drawer (name + kanji + one button) instead of the command hint
-- [ ] SPEC.md §7–8: rewrite to match (wardrobe UI, D-Bus is only `Show()`, the CLI keeps the lock file instead of routing apply through the daemon)
+- [x] SPEC.md §1, §7–8 rewritten to match (wardrobe UI, D-Bus is only `Show()`, every switch holds the lock file instead of routing apply through the daemon)
 
 ## Phase 3: Catppuccin + previews
 

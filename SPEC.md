@@ -23,8 +23,8 @@ kigae (one binary)
                                          org.kde.NightTime
 ```
 
-- Crates: `crates/kigae-core` (library, no Qt) and `crates/kigae` (the binary, with features `daemon` and `overlay`).
-- When the daemon is running, the CLI sends `apply` through it so that the overlay and the CLI never apply at the same moment. If the daemon isn't running, the CLI does the work itself and holds a lock file (`$XDG_RUNTIME_DIR/kigae.lock`).
+- Crates: `crates/kigae-core` (library, no Qt) and `crates/kigae` (the binary; the Cargo feature `overlay`, on by default, adds the daemon and the QML overlay).
+- One switch at a time: the CLI, the overlay and the daemon's sunrise/sunset switch all do the work in their own process and hold the lock file `$XDG_RUNTIME_DIR/kigae.lock` while they do. Nothing is routed through the daemon.
 - Everything runs in sequence. A switch is a short list of steps, and the bulk of it is about 15 process spawns.
 - All reads and side effects go through the `Sys` trait: `RealSys` talks to the session, `DryRun` reads live but records actions, `FakeSys` is an in-memory desktop for the tests.
 
@@ -182,30 +182,33 @@ Kigae runs its prelude (`crates/kigae-core/src/prelude.js`) and then the rice's 
 - When the daemon isn't running, `kigae apply` picks the right half for the current time from the same schedule, and `kigae mood [light|dark]` re-applies just the mood parts of the active rice.
 - `AutomaticLookAndFeel` is forced to `false`, and that change is part of the first snapshot. Plasma's own look-and-feel switch resets too much.
 
-## 7. Overlay
+## 7. Overlay: the fitting room
 
-- **Window**: a full-screen layer-shell surface (`org.kde.layershell`, layer `Overlay`, keyboard `Exclusive`). It's translucent with a dim layer and KWin blur behind it (a small C++ shim around `KWindowEffects::enableBlurBehind`). Cards sit in a `ListView` in the bottom third, each showing preview, name, kanji and tagline. The current rice is marked.
-- **Shortcut**: `kigae-switch.desktop` with `X-KDE-Shortcuts=Meta+Shift+T` and `Exec=kigae overlay`. That sends `Show()` to the daemon.
-- **Opening**: `Show()` opens the overlay with the *next* rice selected. A `Show()` while it's already open means `Next`, because KWin may take the T taps as shortcut presses instead of key events. Duplicates are dropped.
-- **Keys**: T or →/Tab moves to the next card, Shift+T or ←/Shift+Tab moves back, Esc cancels, Enter or a click applies.
-- **Applying on release**: if the keyboard-enter event shows Meta still held, letting go of Meta applies. If Meta was already released when the window got focus (a quick tap), the overlay stays open in **browse mode** and Enter or a click applies. A quick tap never switches the whole desktop by accident.
-- **Apply animation**: fade to the target's preview at full opacity (200 ms), apply in the daemon, wait for the result plus 400 ms for things to settle, then fade out (300 ms). If the switch fails, show an error card with "Undo".
-- The window is created on first use and hidden afterwards, never destroyed, so it opens instantly.
+A wardrobe, not a task switcher (this replaces DESIGN.md's Alt-Tab strip).
 
-## 8. D-Bus API
+- **Window**: a full-screen layer-shell surface (`org.kde.layershell`, layer `Overlay`, keyboard `Exclusive`, scope `kigae`). It's built once when the daemon starts and only hidden afterwards, so it opens instantly. The room behind the cards is the selected look's wallpaper, blurred and dimmed with QML `MultiEffect` (no KWin blur, no C++ shim).
+- **Cards**: a horizontal carousel with depth (selected card large and centred, neighbours smaller and turned; with four or more rices it goes round). A card shows the preview, the kanji on a hanging tag in the rice's most vivid colour, name and tagline on a band in the rice's own window and text colours, palette swatches from its colour scheme, and ☀ / auto / ☾ for `[daynight]` rices (auto = the look for now). Badges: "wearing now", "needs install" (from `doctor`).
+- **Trying it on**: as the selection moves, the room crossfades to that rice's wallpaper (for the picked look) and the overlay takes its accent colour.
+- **Shortcut**: `kigae-switch.desktop` (`Exec=kigae overlay`) bound to Meta+Shift+T by `kigae setup`. That sends `Show()` to the daemon.
+- **Opening**: `Show()` opens the room with the *next* rice selected. A `Show()` while it's open means next, because KWin may take the T taps as shortcut presses instead of key events; a second one within 120 ms is the same press and is dropped.
+- **Keys**: → / L / T next, ← / H / Shift+T / Shift+Tab back, ↑↓ / K J move the day/night pick, Enter / Space / click wear, Tab or Menu opens the drawer, Esc closes the drawer or the room. Scroll moves too.
+- **Wearing on release**: opened with Meta held (no Meta press reaches the window), letting go of Meta wears the selected rice, Alt-Tab style; any key other than Shift or T cancels that. A quick tap leaves the room open in browse mode. A quick tap never switches the desktop by accident.
+- **Stepping in**: the chosen card grows to fill the screen with the target wallpaper (420 ms), the switch runs on a thread behind it, then a 400 ms pause for plasmashell to settle and the veil dissolves into the live desktop (450 ms). On failure the card shrinks back and an error toast offers Undo. Picking the rice already worn (with auto) just closes.
+- **Drawer**: switch history with undo, and each rice's health. Capture is a command hint for now (`kigae capture <name>`).
+- **Motion**: 120–450 ms, eased, scaled by Plasma's `AnimationDurationFactor`; 0 (reduce motion) makes everything instant.
 
-Bus name `dev.kigae.Kigae`, object `/dev/kigae/Kigae`, interface `dev.kigae.Kigae`.
+## 8. D-Bus and the daemon
+
+Bus name `dev.kigae.Kigae`, object `/dev/kigae/Kigae`, interface `dev.kigae.Kigae`, one method:
 
 | Member | Signature |
 |---|---|
-| `List()` | `→ a(ssss)` (id, name, kanji, preview path) |
-| `Current()` | `→ s` |
-| `Apply(s id)` | `→ (b ok, as warnings)` |
-| `Undo()` | `→ b` |
-| `Show()` | `→ ()` |
-| signal `Switched` | `(s from, s to)` |
+| `Show()` | `→ ()` open the fitting room, or move to the next card if it's open |
 
-The daemon runs as the systemd user unit `kigae.service`.
+Everything else (list, apply, undo) stays in the CLI and in the QML bridge inside the daemon; there's no remote apply.
+
+- `kigae daemon` owns the name, runs Qt and the overlay, and follows the sun (§6). If `Overlay.qml` fails to load it exits rather than run with no window.
+- `kigae setup` installs the systemd user unit `kigae.service` (`Type=dbus`, wanted by `graphical-session.target`, `SyslogIdentifier=kigae`), D-Bus activation that hands a `Show()` to that unit if the daemon isn't up, and the shortcut. `kigae setup --remove` takes it all back.
 
 ## 9. CLI
 
@@ -224,6 +227,7 @@ kigae shoot [<id>...]            apply each rice in turn and take its preview sc
 kigae deep <id>                  SDDM + GRUB, one pkexec prompt
 kigae daemon
 kigae overlay                    ask the daemon to show the overlay
+kigae setup [--remove]           start the daemon at login, bind Meta+Shift+T
 ```
 
 ## 10. State and files
