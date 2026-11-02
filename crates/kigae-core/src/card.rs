@@ -31,6 +31,26 @@ pub struct LookCard {
     /// Colour scheme name.
     pub colors: Option<String>,
     pub palette: Option<Palette>,
+    /// `kigae shoot`'s screenshot of this look, if taken.
+    pub preview: Option<PathBuf>,
+}
+
+/// Where `kigae shoot` keeps screenshots: `<id>.jpg`, or `<id>-light.jpg` / `<id>-dark.jpg`.
+pub fn shots_dir() -> PathBuf {
+    crate::config::config_dir().join("previews")
+}
+
+pub fn shot_name(id: &str, mood: Option<MoodKind>) -> String {
+    match mood {
+        Some(m) => format!("{id}-{}.jpg", m.name()),
+        None => format!("{id}.jpg"),
+    }
+}
+
+fn shot(id: &str, mood: Option<MoodKind>) -> Option<PathBuf> {
+    let dir = shots_dir();
+    let own = mood.map(|m| dir.join(shot_name(id, Some(m))));
+    own.into_iter().chain([dir.join(shot_name(id, None))]).find(|p| p.is_file())
 }
 
 /// Colours of a scheme as `#rrggbb`.
@@ -52,7 +72,7 @@ pub struct Palette {
 pub fn card(rice: &Rice, m: &Manifest, paths: &Paths, cache_dir: &Path) -> Card {
     let dirs = scheme_dirs();
     let daynight = m.daynight.is_some();
-    let look = |mood| look_card(&m.look(mood), paths, &dirs);
+    let look = |mood| LookCard { preview: shot(&m.id, mood), ..look_card(&m.look(mood), paths, &dirs) };
     let (light, dark) = if daynight {
         (look(Some(MoodKind::Light)), look(Some(MoodKind::Dark)))
     } else {
@@ -75,6 +95,7 @@ fn look_card(look: &Look, paths: &Paths, dirs: &[PathBuf]) -> LookCard {
         wallpaper: look.wallpaper.as_deref().map(|w| paths.expand(w)).filter(|p| p.is_file()),
         palette: look.colors.as_deref().and_then(|c| scheme_palette(c, dirs)),
         colors: look.colors.clone(),
+        preview: None,
     }
 }
 

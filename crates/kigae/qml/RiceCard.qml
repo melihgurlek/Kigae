@@ -27,7 +27,8 @@ Item {
     readonly property real radius: 22 * u
     // the screenshot is of the night look; by day a day/night rice shows its day wallpaper
     readonly property string wall: look && look.wallpaper ? look.wallpaper : ""
-    readonly property string image: card.preview && !(card.daynight && mood === "light") ? card.preview : wall
+    readonly property string image: look && look.preview ? look.preview
+        : card.preview && !(card.daynight && mood === "light") ? card.preview : wall
 
     implicitHeight: imageH + bandH
 
