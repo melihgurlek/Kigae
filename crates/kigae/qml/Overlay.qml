@@ -41,6 +41,10 @@ Window {
     property bool drawer: false
     property bool stepping: false       // the chosen card is filling the screen
     property bool holding: false        // opened with Meta held: letting go wears
+    // Once we have the keyboard, ask whether Meta is really down: a quick tap means browsing.
+    // Until then assume a hold, so a release that beats the check still wears.
+    onActiveChanged: if (active && visible && !stepping) holdCheck.restart()
+    Timer { id: holdCheck; interval: 40; onTriggered: if (win.holding && !kigae.metaHeld()) win.holding = false }
     property bool metaSeen: false
     property double shownAt: 0
     property string error: ""
@@ -357,7 +361,13 @@ Window {
         spacing: 30
         opacity: rail.opacity * (win.stepping ? 0 : 0.85)
         Repeater {
-            model: [
+            // holding Meta+Shift, KWin keeps ← → (window to screen), so the hold has its own keys
+            model: win.holding ? [
+                { k: "T", t: "next" },
+                { k: "↑ ↓", t: "day · auto · night", dn: true },
+                { k: "let go", t: "wear" },
+                { k: "esc", t: "leave" },
+            ] : [
                 { k: "← →", t: "choose" },
                 { k: "↑ ↓", t: "day · auto · night", dn: true },
                 { k: "⏎", t: "wear" },
@@ -632,6 +642,7 @@ Window {
             // included (Alt-Tab style). If Meta was already up when we got focus, no release comes
             // and we stay open. With the drawer open, letting go just leaves the room open.
             if (meta && win.holding && !win.metaSeen && !win.drawer && !e.isAutoRepeat) win.wear()
+            if (meta && !e.isAutoRepeat) win.holding = false     // a failed wear leaves it open: browse
         }
     }
 }

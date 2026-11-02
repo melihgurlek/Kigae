@@ -27,6 +27,9 @@ pub mod qobject {
     unsafe extern "C++" {
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
+        include!("kigae/src/meta.h");
+        #[cxx_name = "kigaeMetaHeld"]
+        fn meta_held_now() -> bool;
     }
 
     #[auto_cxx_name]
@@ -48,6 +51,9 @@ pub mod qobject {
         fn apply(self: Pin<&mut Kigae>, id: &QString, mood: &QString);
         #[qinvokable]
         fn undo(self: Pin<&mut Kigae>);
+        /// Is Meta down? Asked once the overlay has keyboard focus, to tell a hold from a tap.
+        #[qinvokable]
+        fn meta_held(self: &Kigae) -> bool;
 
         #[qsignal]
         fn show_requested(self: Pin<&mut Kigae>);
@@ -87,6 +93,10 @@ impl qobject::Kigae {
         if PENDING.swap(false, Ordering::SeqCst) {
             self.show_requested();
         }
+    }
+
+    fn meta_held(&self) -> bool {
+        qobject::meta_held_now()
     }
 
     fn reload(self: Pin<&mut Self>) {
