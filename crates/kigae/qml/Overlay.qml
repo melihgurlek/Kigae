@@ -598,7 +598,6 @@ Window {
         Keys.onPressed: e => {
             const meta = e.key === Qt.Key_Meta || e.key === Qt.Key_Super_L || e.key === Qt.Key_Super_R
             if (meta) { win.metaSeen = true; return }
-            if (e.key !== Qt.Key_Shift && e.key !== Qt.Key_T) win.holding = false
             switch (e.key) {
             case Qt.Key_Escape:
                 if (win.drawer) win.drawer = false
@@ -617,7 +616,9 @@ Window {
             case Qt.Key_Down: case Qt.Key_J:
                 if (win.selCard && win.selCard.daynight) win.nudge(win.selCard, 1); break
             case Qt.Key_Tab: case Qt.Key_Menu:
-                win.drawer = !win.drawer; break
+                win.drawer = !win.drawer
+                win.holding = false                       // browsing now: Meta's release won't wear
+                break
             case Qt.Key_Return: case Qt.Key_Enter: case Qt.Key_Space:
                 win.wear(); break
             default:
@@ -627,9 +628,10 @@ Window {
         }
         Keys.onReleased: e => {
             const meta = e.key === Qt.Key_Meta || e.key === Qt.Key_Super_L || e.key === Qt.Key_Super_R
-            // Meta was held when we opened and is let go now: wear what's selected (Alt-Tab style).
-            // If Meta was already up when we got focus, no release comes and we stay open.
-            if (meta && win.holding && !win.metaSeen && !e.isAutoRepeat) win.wear()
+            // Meta was held when we opened and is let go now: wear what's selected, look picks
+            // included (Alt-Tab style). If Meta was already up when we got focus, no release comes
+            // and we stay open. With the drawer open, letting go just leaves the room open.
+            if (meta && win.holding && !win.metaSeen && !win.drawer && !e.isAutoRepeat) win.wear()
         }
     }
 }

@@ -1,0 +1,15 @@
+# Installed by `kigae setup` (@EXE@ is the kigae binary).
+[Unit]
+Description=Kigae: the fitting room overlay, and day/night that follows the sun
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=dev.kigae.Kigae
+ExecStart=@EXE@ daemon
+Restart=on-failure
+SyslogIdentifier=kigae
+
+[Install]
+WantedBy=graphical-session.target
