@@ -200,6 +200,46 @@ pub fn run(argv: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// How long a manifest hook may run before the switch gives up on it.
+const HOOK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Run a manifest hook via `sh -c`. No pipes (a hook that backgrounds something would keep them
+/// open and hang us): stdin and stdout are null, stderr goes to a temp file for the error message.
+fn run_shell(cmd: &str, timeout: std::time::Duration) -> Result<()> {
+    let fail = |msg: String| SysError::Command { cmd: format!("sh -c {cmd:?}"), msg };
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+    let errfile = std::env::temp_dir().join(format!("kigae-hook-{}-{nanos}.err", std::process::id()));
+    let stderr = fs::File::create(&errfile).map_err(|e| fail(e.to_string()))?;
+    let result = (|| {
+        let mut child = Command::new("sh")
+            .args(["-c", cmd])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(stderr)
+            .spawn()
+            .map_err(|e| fail(e.to_string()))?;
+        let start = std::time::Instant::now();
+        let status = loop {
+            if let Some(s) = child.try_wait().map_err(|e| fail(e.to_string()))? {
+                break s;
+            }
+            if start.elapsed() >= timeout {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(fail(format!("timed out after {}s", timeout.as_secs_f32())));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        if status.success() {
+            return Ok(());
+        }
+        let msg = fs::read_to_string(&errfile).unwrap_or_default().trim().to_string();
+        Err(fail(if msg.is_empty() { format!("exited with {status}") } else { msg }))
+    })();
+    let _ = fs::remove_file(&errfile);
+    result
+}
+
 fn io_err(path: &Path) -> impl FnOnce(io::Error) -> SysError + '_ {
     move |err| SysError::Io { path: path.to_path_buf(), err }
 }
@@ -300,14 +340,15 @@ impl Sys for RealSys {
         )?;
         let bad = |what: &str| SysError::DBus { call: CALL, err: format!("unexpected reply: {what}") };
         if let Some(cookie) = reply.get("Cookie").and_then(|c| u32::try_from(c).ok()) {
-            let _: () = self.call(
+            // best effort: the answer is already in hand
+            let _: Result<()> = self.call(
                 CALL,
                 "org.kde.NightTime",
                 "/org/kde/NightTime/Manager",
                 "org.kde.NightTime.Manager",
                 "Unsubscribe",
                 &(cookie,),
-            )?;
+            );
         }
         // Schedule = (kind, v) where v is a(xxxxx): per cycle noon, morning start/end,
         // evening start/end, in ms since the epoch
@@ -354,7 +395,7 @@ impl RealSys {
                 let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
                 run(&argv).map(drop)
             }
-            Action::Shell(cmd) => run(&["sh", "-c", cmd]).map(drop),
+            Action::Shell(cmd) => run_shell(cmd, HOOK_TIMEOUT),
             Action::KWrite { file, groups, key, value, boolean } => {
                 let mut argv = vec!["kwriteconfig6", "--notify", "--file", file.as_str()];
                 argv.extend(group_args(groups));
@@ -364,7 +405,8 @@ impl RealSys {
                         if *boolean {
                             argv.extend(["--type", "bool"]);
                         }
-                        argv.push(v);
+                        // `--` so a value like "-1" isn't read as an option
+                        argv.extend(["--", v.as_str()]);
                     }
                     None => argv.push("--delete"),
                 }
@@ -608,5 +650,30 @@ impl<S: Sys> Sys for DryRun<S> {
     fn act(&mut self, action: &Action) -> Result<String> {
         self.actions.push(action.clone());
         Ok(String::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn hooks_report_failures_and_time_out() {
+        let t = Duration::from_secs(5);
+        assert!(run_shell("true", t).is_ok());
+        let err = run_shell("echo nope >&2; exit 3", t).unwrap_err().to_string();
+        assert!(err.contains("nope"), "{err}");
+        let start = Instant::now();
+        let err = run_shell("sleep 5", Duration::from_millis(100)).unwrap_err().to_string();
+        assert!(err.contains("timed out"), "{err}");
+        assert!(start.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn a_backgrounded_process_does_not_hold_the_hook() {
+        let start = Instant::now();
+        run_shell("sleep 3 &", Duration::from_secs(10)).unwrap();
+        assert!(start.elapsed() < Duration::from_secs(2));
     }
 }
