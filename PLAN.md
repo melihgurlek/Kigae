@@ -67,9 +67,10 @@ Done (2026-11-02, branch `phase2-overlay`):
 
 Next (pick up here):
 - [ ] Live test by hand: Meta+Shift+T hold → T → release wears; quick tap → browse mode; Esc changes nothing; stepping-in looks smooth (no panel flicker)
-- [ ] `data/kigae.service` (systemd user), `data/dev.kigae.Kigae.service` (D-Bus activation → systemd), `data/kigae-switch.desktop` with `X-KDE-Shortcuts=Meta+Shift+T` (free on vortex), and a `kigae setup` or README step that installs them; `cargo install --path crates/kigae`
-- [ ] Qt logs go to journald (`journalctl --user -t kigae`); a QML load error leaves the daemon running with no window: exit instead
-- [ ] Silence the GCC 16 `-Wsfinae-incomplete` noise from Qt headers in the cxx-qt build
+- [x] `data/kigae.service` (systemd user, `Type=dbus`, starts with the graphical session), `data/dev.kigae.Kigae.service` (D-Bus activation → systemd), `data/kigae-switch.desktop`; `kigae setup` writes them with the binary's path, enables the unit and binds Meta+Shift+T through kglobalaccel (refuses if it's taken); `kigae setup --remove` undoes it (2026-11-02)
+- [ ] Run `kigae setup` once by hand (it enables a login service, so it wasn't run for you) and check the shortcut fires and lands in `[services][kigae-switch.desktop]` of `kglobalshortcutsrc`
+- [x] Logs: the unit sets `SyslogIdentifier=kigae`, so `journalctl --user -t kigae`; a QML load error makes the daemon exit instead of running windowless
+- [x] GCC 16 `-Wsfinae-incomplete` noise silenced in the cxx-qt build
 - [ ] og's dock shows an unknown-application (folder) icon: not found yet; every launcher in `kigae.launchers` has a Papirus icon. Needs a look at og live
 - [x] Ukiyo's card has ☀/☾: `[daynight]` on `rice/ukiyo` (UkiyoPaper + daylight print / Ukiyo + night print); the hook is `ukiyo-sky --remember`, so the timer takes over without undoing a look picked against the sun (2026-11-02)
 - [x] Day/night is automatic by default: the card's toggle is ☀ / auto / ☾ (auto = the look for now); the daemon checks NightTime every minute and at sunrise/sunset re-applies the active rice's look, so a hand pick holds until then (og included, no more `kigae mood` by hand). Mood switches now run the rice's hooks too (ukiyo-sky --remember keeps the dawn print). Not yet seen live at a real sunrise/sunset

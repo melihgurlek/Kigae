@@ -232,6 +232,10 @@ pub fn run() -> Res {
     if let Some(engine) = engine.as_mut() {
         engine.load(&QUrl::from("qrc:/qt/qml/dev/kigae/qml/Overlay.qml"));
     }
+    // Overlay.qml calls attach() when it's built; without it there's no window to show
+    if QT.lock().expect("lock").is_none() {
+        return Err("Overlay.qml failed to load (Qt's error is above)".into());
+    }
     if let Some(app) = app.as_mut() {
         app.exec();
     }
@@ -265,6 +269,6 @@ fn follow_sun() {
 pub fn show() -> Res {
     let conn = zbus::blocking::Connection::session().map_err(|e| e.to_string())?;
     conn.call_method(Some(BUS), PATH, Some(BUS), "Show", &())
-        .map_err(|e| format!("{BUS}.Show: {e} (start it with `kigae daemon` or `systemctl --user start kigae`)"))?;
+        .map_err(|e| format!("{BUS}.Show: {e} (run `kigae setup` once, or start `kigae daemon` by hand)"))?;
     Ok(())
 }

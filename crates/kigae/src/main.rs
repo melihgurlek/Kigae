@@ -16,6 +16,8 @@ use kigae_core::capture;
 
 #[cfg(feature = "overlay")]
 mod overlay;
+#[cfg(feature = "overlay")]
+mod setup;
 
 #[derive(Parser)]
 #[command(version, about = "Live rice switcher for KDE Plasma")]
@@ -115,6 +117,12 @@ enum Command {
     Daemon,
     /// Ask the daemon to show the overlay (bound to Meta+Shift+T)
     Overlay,
+    /// Run the daemon at login (systemd user unit, D-Bus activation) and bind Meta+Shift+T
+    Setup {
+        /// Stop the daemon, remove the unit and release the shortcut
+        #[arg(long)]
+        remove: bool,
+    },
 }
 
 struct Ctx {
@@ -191,8 +199,10 @@ fn main() -> ExitCode {
         Command::Daemon => overlay::run(),
         #[cfg(feature = "overlay")]
         Command::Overlay => overlay::show(),
+        #[cfg(feature = "overlay")]
+        Command::Setup { remove } => if remove { setup::remove() } else { setup::install() },
         #[cfg(not(feature = "overlay"))]
-        Command::Daemon | Command::Overlay => Err("built without the overlay feature".into()),
+        Command::Daemon | Command::Overlay | Command::Setup { .. } => Err("built without the overlay feature".into()),
         Command::Shoot { .. } => Err("not built yet (phase 3 in PLAN.md)".into()),
         Command::Deep { .. } => Err("not built yet (phase 4 in PLAN.md)".into()),
     };

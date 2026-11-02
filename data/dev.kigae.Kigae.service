@@ -1,0 +1,5 @@
+# Installed by `kigae setup`: D-Bus starts the daemon through systemd on the first Show().
+[D-BUS Service]
+Name=dev.kigae.Kigae
+Exec=@EXE@ daemon
+SystemdService=kigae.service

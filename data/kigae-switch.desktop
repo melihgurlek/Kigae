@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Kigae
+Comment=Open the fitting room and switch rices
+Exec=@EXE@ overlay
+Icon=preferences-desktop-theme
+NoDisplay=true
+X-KDE-Shortcuts=Meta+Shift+T

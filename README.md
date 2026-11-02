@@ -19,8 +19,13 @@ undid ukiyo → og (29 changes)
 ## Getting started
 
 ```
-cargo build --release && cp target/release/kigae ~/.local/bin/
+cargo install --path crates/kigae
+kigae setup
 ```
+
+The overlay needs Qt 6 and layer-shell-qt headers to build (`sudo dnf install qt6-qtbase-devel qt6-qtdeclarative-devel layer-shell-qt-devel`); `cargo install --path crates/kigae --no-default-features` builds the CLI alone.
+
+`kigae setup` installs a systemd user service that starts the daemon at login (it keeps day/night in step with the sun and opens the fitting room), D-Bus activation for it, and binds Meta+Shift+T. It won't take the shortcut if something else has it. Run it again after each `cargo install`; `kigae setup --remove` takes it all back. Logs: `journalctl --user -t kigae`.
 
 Kigae keeps its files in `~/.config/kigae`:
 
