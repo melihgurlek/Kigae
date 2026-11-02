@@ -305,7 +305,13 @@ fn switch(id: &str, mood: Option<MoodKind>) -> Res<engine::Outcome> {
     let layout_js = if only_mood { None } else { to.layout_js().map_err(|e| e.to_string())? };
     let opts = Opts { mood, only_mood, unset: c.policy, ..Opts::default() };
     let _lock = lock()?;
-    engine::apply(&mut real, &c.paths, from_m.as_ref(), Target { manifest: &to_m, layout_js }, opts).map_err(|e| e.to_string())
+    let target = Target { manifest: &to_m, layout_js };
+    if std::env::var_os("KIGAE_TRACE").is_some() {
+        engine::apply(&mut Traced::new(real), &c.paths, from_m.as_ref(), target, opts)
+    } else {
+        engine::apply(&mut real, &c.paths, from_m.as_ref(), target, opts)
+    }
+    .map_err(|e| e.to_string())
 }
 
 /// The sun just rose or set: put up the active rice's look for now, if it has two (SPEC.md §6).

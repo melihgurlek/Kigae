@@ -158,6 +158,12 @@ pub fn apply<S: Sys>(
     type Step<'a, S> = (&'static str, bool, Box<dyn Fn(&mut Run<'_, S>) -> Result<(), ApplyError> + 'a>);
     let look = m.look(mood);
     let full = !opts.only_mood;
+    // the panels as they are, for undo: read now, while plasmashell is idle (after the theme
+    // tools it's busy repainting and the same two calls take ~0.6 s instead of ~0.1 s)
+    let panels = match (&to.layout_js, full) {
+        (Some(_), true) => Some((run.sys.capture_layout()?, run.sys.dump_layout()?)),
+        _ => None,
+    };
     let steps: Vec<Step<'_, S>> = vec![
         ("services-stop", true, Box::new(|r| if full { services_stop(r, from, m) } else { Ok(()) })),
         ("kconfig", true, Box::new(|r| kconfig(r, from, m, &look, opts.unset.kconfig))),
@@ -165,8 +171,8 @@ pub fn apply<S: Sys>(
         ("style", true, Box::new(|r| plasma_part(r, look.style.as_deref(), Part::Style))),
         ("icons", true, Box::new(|r| plasma_part(r, look.icons.as_deref(), Part::Icons))),
         ("cursor", true, Box::new(|r| plasma_part(r, look.cursor.as_deref(), Part::Cursor))),
-        ("layout", true, Box::new(|r| match (&to.layout_js, full) {
-            (Some(js), true) => layout(r, &m.id, js),
+        ("layout", true, Box::new(|r| match (&to.layout_js, &panels) {
+            (Some(js), Some(before)) => layout(r, &m.id, js, before),
             _ => Ok(()),
         })),
         ("wallpaper", false, Box::new(|r| wallpaper(r, paths, look.wallpaper.as_deref()))),
@@ -326,10 +332,10 @@ fn plasma_part<S: Sys>(r: &mut Run<'_, S>, want: Option<&str>, part: Part) -> Re
     Ok(())
 }
 
-fn layout<S: Sys>(r: &mut Run<'_, S>, id: &str, js: &str) -> Result<(), ApplyError> {
-    let state = Some(r.sys.capture_layout()?);
-    let script = r.sys.dump_layout()?;
-    r.record(Entry::Layout { script, state })?;
+/// `before`: `capture_layout` and `dump_layout`, read before the switch started.
+fn layout<S: Sys>(r: &mut Run<'_, S>, id: &str, js: &str, before: &(String, String)) -> Result<(), ApplyError> {
+    let (state, script) = before.clone();
+    r.record(Entry::Layout { script, state: Some(state) })?;
     let out = r.sys.act(&Action::EvaluateScript {
         what: format!("prelude + layout of {id}"),
         script: format!("{}{js}\nkigae.done();\n", prelude()),

@@ -83,6 +83,15 @@ Next (pick up here):
 - Catppuccin: dropped (2026-11-02), two rices are enough for now
 - [x] `kigae shoot`: wears each look of each rice, hides the windows (KWin Show Desktop), screenshots with spectacle, puts back what was on; cards show the selected look's shot. Live: 4 shots (Ukiyo and og, day and night) in 33 s, back on Ukiyo dark (2026-11-02)
 
+## Switch speed (measured 2026-11-03, `KIGAE_TRACE=1`)
+
+A switch takes ~5 s, from the room or the CLI. Kigae's own work is ~0.5 s (config reads are
+in-process, systemd goes over D-Bus, the panels are read for undo before anything changes). The
+rest is plasmashell: the theme tools 1.5–2.3 s, the panel rebuild ~1.2 s, the tray pass ~0.75 s
+(600 ms of it a fixed wait), varying ±0.7 s run to run. Tried and dropped: running the theme tools
+side by side (slower: they queue on plasmashell) and fewer overlay redraws during the switch (no
+change). Left untried: removing the panels before the theme tools (maybe −1 s, changes undo order).
+
 ## Phase 4: deep switch
 
 - `kigae deep <id>`: SDDM + GRUB through the existing scripts, one `pkexec`

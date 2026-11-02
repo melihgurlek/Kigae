@@ -87,6 +87,8 @@ Window {
         setMood(c, order[Math.max(0, Math.min(2, order.indexOf(pickOf(c)) + d))])
     }
     readonly property var selLook: lookOf(selCard)
+    // the veil fills the screen: nothing behind it needs drawing
+    readonly property bool covered: veil.visible && veil.t >= 1 && veil.opacity >= 1
 
     // the room takes the rice's most vivid colour: its accent is often a muted selection grey
     function chroma(h) {
@@ -242,6 +244,7 @@ Window {
     // ── the room: the selected rice's wallpaper, blurred and dimmed ─────────────
     Item {
         id: room
+        visible: !win.covered                      // under the veil: don't draw it at all
         anchors.fill: parent
         opacity: 0
 
@@ -353,6 +356,7 @@ Window {
     // ── the rail ─────────────────────────────────────────────────────────────────
     Item {
         id: rail
+        visible: !win.covered
         anchors.fill: parent
         property real lift: 0
         opacity: 0
@@ -538,7 +542,7 @@ Window {
         SequentialAnimation {
             id: dissolve
             NumberAnimation { target: veil; property: "t"; to: 1; duration: win.dur(120) }
-            PauseAnimation { duration: Math.max(150, win.dur(400)) }   // let plasmashell settle under the veil
+            PauseAnimation { duration: Math.max(100, win.dur(200)) }   // the tray pass already waited for the panels
             ScriptAction { script: { room.opacity = 0; rail.opacity = 0 } }
             NumberAnimation { target: veil; property: "opacity"; to: 0; duration: win.dur(450); easing.type: Easing.InOutQuad }
             ScriptAction { script: { win.visible = false; win.stepping = false; veil.visible = false } }

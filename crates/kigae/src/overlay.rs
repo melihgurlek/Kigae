@@ -151,6 +151,7 @@ impl qobject::Kigae {
         self.as_mut().set_busy(true);
         let qt = self.qt_thread();
         std::thread::spawn(move || {
+            let t = std::time::Instant::now();
             // a panic must not leave `busy` set: Enter and undo would silently do nothing
             let (ok, msg) = match catch_unwind(AssertUnwindSafe(work)) {
                 Ok(Ok(w)) => (true, w),
@@ -158,13 +159,17 @@ impl qobject::Kigae {
                 Err(_) => (false, "the switch panicked (see the daemon's log)".to_string()),
             };
             let ticket = TICKET.fetch_add(1, Ordering::SeqCst) + 1;
-            let s = catch_unwind(state).ok().and_then(Result::ok).unwrap_or_default();
+            eprintln!("kigae: {} in {:.2} s", if ok { "switched" } else { "failed" }, t.elapsed().as_secs_f64());
+            // answer first, so the room steps in right away; the rices are re-read for next time
             let _ = qt.queue(move |mut k| {
-                if !s.is_empty() && fresh(ticket) {
-                    k.as_mut().set_state(QString::from(&s));
-                }
                 k.as_mut().set_busy(false);
                 k.finished(ok, QString::from(&msg));
+            });
+            let s = catch_unwind(state).ok().and_then(Result::ok).unwrap_or_default();
+            let _ = qt.queue(move |k| {
+                if !s.is_empty() && fresh(ticket) {
+                    k.set_state(QString::from(&s));
+                }
             });
         });
     }
