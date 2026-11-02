@@ -70,6 +70,8 @@ Next (pick up here):
 - [ ] `data/kigae.service` (systemd user), `data/dev.kigae.Kigae.service` (D-Bus activation → systemd), `data/kigae-switch.desktop` with `X-KDE-Shortcuts=Meta+Shift+T` (free on vortex), and a `kigae setup` or README step that installs them; `cargo install --path crates/kigae`
 - [ ] Qt logs go to journald (`journalctl --user -t kigae`); a QML load error leaves the daemon running with no window: exit instead
 - [ ] Silence the GCC 16 `-Wsfinae-incomplete` noise from Qt headers in the cxx-qt build
+- [ ] og's dock shows an unknown-application (folder) icon: not found yet; every launcher in `kigae.launchers` has a Papirus icon. Needs a look at og live
+- [ ] Ukiyo's card shows night only: Ukiyo has no `[daynight]`, ukiyo-sky's timer owns its day/night. Do phase 5 now (UkiyoPaper + day print as `light`, Ukiyo + night print as `dark`, ukiyo-sky keeps only the dawn/daylight prints) so the card gets ☀/☾
 - [ ] Capture from the drawer (name + kanji + one button) instead of the command hint
 - [ ] SPEC.md §7–8: rewrite to match (wardrobe UI, D-Bus is only `Show()`, the CLI keeps the lock file instead of routing apply through the daemon)
 
