@@ -68,7 +68,7 @@ Done (2026-11-02, branch `phase2-overlay`):
 Next (pick up here):
 - [ ] Live test by hand: Meta+Shift+T hold → T → release wears; quick tap → browse mode; Esc changes nothing; stepping-in looks smooth (no panel flicker)
 - [x] `data/kigae.service` (systemd user, `Type=dbus`, starts with the graphical session), `data/dev.kigae.Kigae.service` (D-Bus activation → systemd), `data/kigae-switch.desktop`; `kigae setup` writes them with the binary's path, enables the unit and binds Meta+Shift+T through kglobalaccel (refuses if it's taken); `kigae setup --remove` undoes it (2026-11-02)
-- [ ] Run `kigae setup` once by hand (it enables a login service, so it wasn't run for you) and check the shortcut fires and lands in `[services][kigae-switch.desktop]` of `kglobalshortcutsrc`
+- [x] `kigae setup` run on vortex: service active, Meta+Shift+T bound (kglobalaccel picks up `X-KDE-Shortcuts` from the desktop file by itself)
 - [x] Logs: the unit sets `SyslogIdentifier=kigae`, so `journalctl --user -t kigae`; a QML load error makes the daemon exit instead of running windowless
 - [x] GCC 16 `-Wsfinae-incomplete` noise silenced in the cxx-qt build
 - [ ] og's dock shows an unknown-application (folder) icon: not found yet; every launcher in `kigae.launchers` has a Papirus icon. Needs a look at og live

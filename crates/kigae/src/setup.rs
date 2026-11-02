@@ -54,20 +54,27 @@ fn kglobalaccel() -> Res<zbus::blocking::Proxy<'static>> {
         .map_err(|e| format!("kglobalaccel: {e}"))
 }
 
+/// KGlobalShortcutInfo: action id, action name, component id, component name, context id,
+/// context name, keys, default keys.
 type ShortcutInfo = (String, String, String, String, String, String, Vec<i32>, Vec<i32>);
 
-/// Bind Meta+Shift+T to the desktop file, unless something else holds it.
+/// Bind Meta+Shift+T to the desktop file, unless something else holds it. kglobalaccel usually
+/// picks up the desktop file's `X-KDE-Shortcuts` by itself; registering covers when it doesn't.
 fn bind_shortcut() -> Res {
     let kga = kglobalaccel()?;
     let holders: Vec<ShortcutInfo> =
         kga.call("getGlobalShortcutsByKey", &(META_SHIFT_T,)).map_err(|e| format!("kglobalaccel: {e}"))?;
-    if let Some(h) = holders.iter().find(|h| h.0 != COMPONENT) {
+    if let Some(h) = holders.iter().find(|h| h.2 != COMPONENT) {
         return Err(format!(
             "Meta+Shift+T already belongs to \"{}\" ({}); free it in System Settings → Shortcuts and run setup again",
-            h.5, h.2
+            h.1, h.3
         ));
     }
-    let id = [COMPONENT, ACTION, "Kigae", "Open the fitting room"];
+    if !holders.is_empty() {
+        println!("  Meta+Shift+T is bound");
+        return Ok(());
+    }
+    let id: &[&str] = &[COMPONENT, ACTION, "Kigae", "Open the fitting room"];
     kga.call::<_, _, ()>("doRegister", &(id,)).map_err(|e| format!("kglobalaccel: {e}"))?;
     kga.call::<_, _, ()>("setForeignShortcut", &(id, vec![META_SHIFT_T])).map_err(|e| format!("kglobalaccel: {e}"))?;
     println!("  bound Meta+Shift+T");
