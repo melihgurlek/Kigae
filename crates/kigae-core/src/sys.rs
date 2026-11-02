@@ -119,6 +119,8 @@ pub trait Sys {
 #[derive(Default)]
 pub struct RealSys {
     bus: Option<zbus::blocking::Connection>,
+    /// Where KConfig files live, for in-process reads (`kconfig::dirs`).
+    config_dirs: Option<Vec<std::path::PathBuf>>,
 }
 
 /// kreadconfig6 can't tell "unset" from "empty"; ask for this default to find out.
@@ -168,6 +170,19 @@ impl RealSys {
         bus.send(&msg).map_err(err)
     }
 
+    /// A call on the user systemd manager.
+    fn systemd<B, R>(&mut self, method: &'static str, body: &B) -> Result<R>
+    where
+        B: serde::Serialize + zbus::zvariant::DynamicType,
+        R: for<'d> zbus::zvariant::DynamicDeserialize<'d>,
+    {
+        self.call(method, "org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", method, body)
+    }
+
+    fn unit_file_state(&mut self, unit: &str) -> Result<String> {
+        self.systemd("GetUnitFileState", &(unit,))
+    }
+
     fn evaluate(&mut self, script: &str) -> Result<String> {
         self.call(
             "evaluateScript",
@@ -210,6 +225,10 @@ fn group_args(groups: &[String]) -> Vec<&str> {
 
 impl Sys for RealSys {
     fn kread(&mut self, file: &str, groups: &[String], key: &str) -> Result<Option<String>> {
+        let dirs = self.config_dirs.get_or_insert_with(crate::kconfig::dirs);
+        if let Some(v) = crate::kconfig::read(dirs, file, groups, key) {
+            return Ok(v);
+        }
         let mut argv = vec!["kreadconfig6", "--file", file];
         argv.extend(group_args(groups));
         argv.extend(["--key", key, "--default", UNSET]);
@@ -234,24 +253,28 @@ impl Sys for RealSys {
     }
 
     fn unit_state(&mut self, unit: &str) -> Result<UnitState> {
-        // both exit non-zero for "disabled"/"inactive", so read stdout only
-        let q = |verb: &str| {
-            Command::new("systemctl")
-                .args(["--user", verb, unit])
-                .output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .map_err(|e| SysError::Command { cmd: format!("systemctl {verb}"), msg: e.to_string() })
+        // like `systemctl --user is-enabled` / `is-active`: no unit file or not loaded is "no"
+        let enabled = self.unit_file_state(unit).is_ok_and(|s| s == "enabled");
+        let unit_path: Result<zbus::zvariant::OwnedObjectPath> = self.systemd("GetUnit", &(unit,));
+        let active = match unit_path {
+            Ok(path) => {
+                let v: zbus::zvariant::OwnedValue = self.call(
+                    "systemd ActiveState",
+                    "org.freedesktop.systemd1",
+                    path.as_str(),
+                    "org.freedesktop.DBus.Properties",
+                    "Get",
+                    &("org.freedesktop.systemd1.Unit", "ActiveState"),
+                )?;
+                String::try_from(v).is_ok_and(|s| s == "active")
+            }
+            Err(_) => false,
         };
-        Ok(UnitState { enabled: q("is-enabled")? == "enabled", active: q("is-active")? == "active" })
+        Ok(UnitState { enabled, active })
     }
 
     fn unit_exists(&mut self, unit: &str) -> bool {
-        Command::new("systemctl")
-            .args(["--user", "cat", unit])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        self.unit_file_state(unit).is_ok()
     }
 
     fn dump_layout(&mut self) -> Result<String> {
@@ -396,12 +419,23 @@ impl RealSys {
                 Err(e) if e.kind() != io::ErrorKind::NotFound => Err(io_err(path)(e)),
                 _ => Ok(()),
             },
+            // Over D-Bus, without the daemon-reload `systemctl enable` does (~700 ms): the
+            // [Install] links only matter at the next login, and start/stop act right away.
             Action::Unit { unit, enable, active } => {
-                if let Some(e) = enable {
-                    run(&["systemctl", "--user", if *e { "enable" } else { "disable" }, unit])?;
+                match enable {
+                    Some(true) => {
+                        let _: (bool, Vec<(String, String, String)>) =
+                            self.systemd("EnableUnitFiles", &(vec![unit.as_str()], false, true))?;
+                    }
+                    Some(false) => {
+                        let _: Vec<(String, String, String)> =
+                            self.systemd("DisableUnitFiles", &(vec![unit.as_str()], false))?;
+                    }
+                    None => {}
                 }
                 if let Some(a) = active {
-                    run(&["systemctl", "--user", if *a { "start" } else { "stop" }, unit])?;
+                    let method = if *a { "StartUnit" } else { "StopUnit" };
+                    let _: zbus::zvariant::OwnedObjectPath = self.systemd(method, &(unit.as_str(), "replace"))?;
                 }
                 Ok(())
             }
@@ -608,5 +642,61 @@ impl<S: Sys> Sys for DryRun<S> {
     fn act(&mut self, action: &Action) -> Result<String> {
         self.actions.push(action.clone());
         Ok(String::new())
+    }
+}
+
+// ───────────────────────────── timing ─────────────────────────────
+
+/// Passes everything through and prints how long each read and action took (`KIGAE_TRACE=1`).
+pub struct Traced<S: Sys> {
+    pub inner: S,
+    start: std::time::Instant,
+}
+
+impl<S: Sys> Traced<S> {
+    pub fn new(inner: S) -> Self {
+        Self { inner, start: std::time::Instant::now() }
+    }
+
+    fn time<T>(&mut self, what: impl FnOnce() -> String, f: impl FnOnce(&mut S) -> T) -> T {
+        let t = std::time::Instant::now();
+        let out = f(&mut self.inner);
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        let at = self.start.elapsed().as_secs_f64() * 1000.0;
+        eprintln!("{at:8.1} ms  {ms:7.1} ms  {}", what());
+        out
+    }
+}
+
+impl<S: Sys> Sys for Traced<S> {
+    fn kread(&mut self, file: &str, groups: &[String], key: &str) -> Result<Option<String>> {
+        self.time(|| format!("read {file} [{}] {key}", groups.join("][")), |s| s.kread(file, groups, key))
+    }
+    fn file_state(&mut self, path: &Path) -> Result<FileState> {
+        self.time(|| format!("stat {}", path.display()), |s| s.file_state(path))
+    }
+    fn exists(&mut self, path: &Path) -> bool {
+        self.time(|| format!("exists {}", path.display()), |s| s.exists(path))
+    }
+    fn unit_state(&mut self, unit: &str) -> Result<UnitState> {
+        self.time(|| format!("unit state {unit}"), |s| s.unit_state(unit))
+    }
+    fn unit_exists(&mut self, unit: &str) -> bool {
+        self.time(|| format!("unit exists {unit}"), |s| s.unit_exists(unit))
+    }
+    fn dump_layout(&mut self) -> Result<String> {
+        self.time(|| "dump layout".into(), |s| s.dump_layout())
+    }
+    fn capture_layout(&mut self) -> Result<String> {
+        self.time(|| "capture layout".into(), |s| s.capture_layout())
+    }
+    fn wallpaper(&mut self) -> Result<Option<String>> {
+        self.time(|| "read wallpaper".into(), |s| s.wallpaper())
+    }
+    fn is_day(&mut self) -> Result<bool> {
+        self.time(|| "is day".into(), |s| s.is_day())
+    }
+    fn act(&mut self, action: &Action) -> Result<String> {
+        self.time(|| action.to_string(), |s| s.act(action))
     }
 }
