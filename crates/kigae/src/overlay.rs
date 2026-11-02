@@ -225,6 +225,7 @@ pub fn run() -> Res {
         .and_then(|b| b.serve_at(PATH, Service))
         .and_then(|b| b.build())
         .map_err(|e| format!("D-Bus {BUS}: {e} (is a daemon already running?)"))?;
+    std::thread::spawn(follow_sun);
     cxx_qt::init_qml_module!("dev.kigae");
     let mut app = QGuiApplication::new();
     let mut engine = QQmlApplicationEngine::new();
@@ -235,6 +236,29 @@ pub fn run() -> Res {
         app.exec();
     }
     Ok(())
+}
+
+/// Watch NightTime; at sunrise and sunset re-apply the active rice's day or night look. A look
+/// picked by hand holds until then.
+fn follow_sun() {
+    let mut sys = RealSys::new();
+    let mut last = sys.is_day().ok();
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        let Ok(day) = sys.is_day() else { continue };
+        if last == Some(day) {
+            continue;
+        }
+        last = Some(day);
+        match crate::follow_sun() {
+            Ok(Some(done)) => eprintln!("kigae: {}: {done}", if day { "sunrise" } else { "sunset" }),
+            Ok(None) => {}
+            Err(e) => eprintln!("kigae: following the sun: {e}"),
+        }
+        if let Some(t) = QT.lock().expect("lock").as_ref() {
+            let _ = t.queue(|k| k.reload());
+        }
+    }
 }
 
 /// `kigae overlay`: ask the daemon to show itself (D-Bus activation starts it if needed).

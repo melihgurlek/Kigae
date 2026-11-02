@@ -37,7 +37,7 @@ Window {
     property real pos: 0                // sel, animated; cards place themselves by i - pos
     Behavior on pos { enabled: !win.jump; NumberAnimation { duration: win.dur(340); easing.type: Easing.OutCubic } }
     property bool jump: false
-    property var moods: ({})            // id → "light" | "dark", picked on the card
+    property var moods: ({})            // id → "light" | "auto" | "dark", picked on the card
     property bool drawer: false
     property bool stepping: false       // the chosen card is filling the screen
     property bool holding: false        // opened with Meta held: letting go wears
@@ -46,8 +46,17 @@ Window {
     property string error: ""
 
     readonly property var selCard: n ? cards[Math.max(0, Math.min(sel, n - 1))] : null
-    function moodOf(c) { return c && c.daynight ? (moods[c.id] || st.mood || "dark") : "light" }
+    // auto: the look for now, and the daemon follows the sun from there
+    function pickOf(c) { return c && c.daynight ? (moods[c.id] || "auto") : "auto" }
+    function moodOf(c) {
+        const p = pickOf(c)
+        return c && c.daynight ? (p === "auto" ? (st.mood || "dark") : p) : "light"
+    }
     function lookOf(c) { return c ? (moodOf(c) === "light" ? c.light : c.dark) : null }
+    function nudge(c, d) {
+        const order = ["light", "auto", "dark"]
+        setMood(c, order[Math.max(0, Math.min(2, order.indexOf(pickOf(c)) + d))])
+    }
     readonly property var selLook: lookOf(selCard)
 
     // the room takes the rice's most vivid colour: its accent is often a muted selection grey
@@ -122,8 +131,8 @@ Window {
             error = c.name + " isn't installed yet: " + c.problems[0] + "\nRun  kigae install " + c.id
             return
         }
-        const mood = c.daynight ? moodOf(c) : ""
-        if (c.id === st.current && (!c.daynight || mood === st.mood)) { close(); return }
+        const mood = pickOf(c) === "auto" ? "" : pickOf(c)
+        if (c.id === st.current && (!c.daynight || mood === "")) { close(); return }
         error = ""
         stepping = true
         const r = rail.itemAt(sel)
@@ -302,6 +311,7 @@ Window {
                 card: modelData
                 look: win.lookOf(modelData)
                 mood: win.moodOf(modelData)
+                pick: win.pickOf(modelData)
                 current: modelData.id === win.st.current
                 selected: index === win.sel
                 accent: win.vivid(look)
@@ -349,7 +359,7 @@ Window {
         Repeater {
             model: [
                 { k: "← →", t: "choose" },
-                { k: "↑ ↓", t: "day · night", dn: true },
+                { k: "↑ ↓", t: "day · auto · night", dn: true },
                 { k: "⏎", t: "wear" },
                 { k: "⇥", t: "drawer" },
                 { k: "esc", t: "leave" },
@@ -603,9 +613,9 @@ Window {
             case Qt.Key_Backtab:
                 win.step(-1); break
             case Qt.Key_Up: case Qt.Key_K:
-                if (win.selCard && win.selCard.daynight) win.setMood(win.selCard, "light"); break
+                if (win.selCard && win.selCard.daynight) win.nudge(win.selCard, -1); break
             case Qt.Key_Down: case Qt.Key_J:
-                if (win.selCard && win.selCard.daynight) win.setMood(win.selCard, "dark"); break
+                if (win.selCard && win.selCard.daynight) win.nudge(win.selCard, 1); break
             case Qt.Key_Tab: case Qt.Key_Menu:
                 win.drawer = !win.drawer; break
             case Qt.Key_Return: case Qt.Key_Enter: case Qt.Key_Space:

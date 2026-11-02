@@ -290,6 +290,23 @@ fn switch(id: &str, mood: Option<MoodKind>) -> Res<engine::Outcome> {
     engine::apply(&mut real, &c.paths, from_m.as_ref(), Target { manifest: &to_m, layout_js }, opts).map_err(|e| e.to_string())
 }
 
+/// The sun just rose or set: put up the active rice's look for now, if it has two (SPEC.md §6).
+#[cfg(feature = "overlay")]
+fn follow_sun() -> Res<Option<String>> {
+    let c = ctx()?;
+    let mut real = RealSys::new();
+    let Some((rice, _)) = c.current(&mut real) else { return Ok(None) };
+    if rice.manifest.daynight.is_none() {
+        return Ok(None);
+    }
+    let m = c.effective(&rice.manifest);
+    let opts = Opts { only_mood: true, unset: c.policy, ..Opts::default() };
+    let _lock = lock()?;
+    let out = engine::apply(&mut real, &c.paths, Some(&m), Target { manifest: &m, layout_js: None }, opts)
+        .map_err(|e| e.to_string())?;
+    Ok(Some(format!("{}{}", rice.id(), mood_label(out.mood))))
+}
+
 fn mood_label(m: Option<MoodKind>) -> String {
     m.map(|m| format!(" ({})", m.name())).unwrap_or_default()
 }
