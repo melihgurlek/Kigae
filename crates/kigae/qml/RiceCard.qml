@@ -61,17 +61,31 @@ Item {
             Behavior on color { ColorAnimation { duration: root.dur } }
         }
 
+        // shows the screenshot; `shotNext` loads the next one and hands it over once decoded,
+        // so switching day/night doesn't blank the card in between
         Image {
             id: shot
             width: parent.width
             height: root.imageH
-            source: root.fileUrl(root.image)
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
             sourceSize.width: 1280
             smooth: true
-            opacity: status === Image.Ready ? 1 : 0
+            opacity: source.toString().length > 0 ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: root.dur } }
+        }
+        Image {
+            id: shotNext
+            visible: false
+            source: root.fileUrl(root.image)
+            asynchronous: true
+            sourceSize.width: 1280
+            function sync() {
+                if (source.toString().length === 0 || status === Image.Ready) shot.source = source
+            }
+            // after the load has started, so a cached image is already Ready
+            onSourceChanged: Qt.callLater(sync)
+            onStatusChanged: sync()
         }
 
         // the screenshot sinks into the band instead of stopping at a hard line
@@ -178,13 +192,15 @@ Item {
                 }
             }
         }
+    }
 
-        // pushed-back cards go dark instead of just transparent: it reads as depth
-        Rectangle {
-            anchors.fill: parent
-            color: "#07070a"
-            opacity: root.dim * 0.55
-        }
+    // pushed-back cards go dark instead of just transparent: it reads as depth. A sibling of
+    // the masked body, so the carousel moving doesn't re-render every card's layer.
+    Rectangle {
+        anchors.fill: body
+        radius: root.radius
+        color: "#07070a"
+        opacity: root.dim * 0.55
     }
 
     Rectangle {

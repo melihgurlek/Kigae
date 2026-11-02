@@ -6,7 +6,8 @@
 
 use std::pin::Pin;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use cxx_qt::{CxxQtThread, Threading};
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
@@ -67,6 +68,15 @@ pub struct KigaeRust {
 static QT: Mutex<Option<CxxQtThread<qobject::Kigae>>> = Mutex::new(None);
 /// A `Show()` that arrived before QML attached (D-Bus activation starts us on the hotkey).
 static PENDING: AtomicBool = AtomicBool::new(false);
+/// Tickets for state reads, handed out as each read starts; a reply older than the newest one
+/// already shown is dropped, so a slow `reload` can't overwrite what a switch just produced.
+static TICKET: AtomicU64 = AtomicU64::new(0);
+static SHOWN: AtomicU64 = AtomicU64::new(0);
+
+/// On the Qt thread: show `s` unless a read that started later has already been shown.
+fn fresh(ticket: u64) -> bool {
+    SHOWN.fetch_max(ticket, Ordering::SeqCst) <= ticket
+}
 
 fn request_show() {
     let qt = QT.lock().expect("lock");
@@ -92,10 +102,13 @@ impl qobject::Kigae {
     fn reload(self: Pin<&mut Self>) {
         let qt = self.qt_thread();
         std::thread::spawn(move || {
-            let s = state().unwrap_or_else(|e| json!({ "error": e }).to_string());
+            let ticket = TICKET.fetch_add(1, Ordering::SeqCst) + 1;
+            let s = catch_unwind(state)
+                .unwrap_or_else(|_| Err("reading the rices panicked".into()))
+                .unwrap_or_else(|e| json!({ "error": e }).to_string());
             let _ = qt.queue(move |k| {
                 let s = QString::from(&s);
-                if *k.state() != s {
+                if fresh(ticket) && *k.state() != s {
                     k.set_state(s);
                 }
             });
@@ -138,13 +151,16 @@ impl qobject::Kigae {
         self.as_mut().set_busy(true);
         let qt = self.qt_thread();
         std::thread::spawn(move || {
-            let (ok, msg) = match work() {
-                Ok(w) => (true, w),
-                Err(e) => (false, e),
+            // a panic must not leave `busy` set: Enter and undo would silently do nothing
+            let (ok, msg) = match catch_unwind(AssertUnwindSafe(work)) {
+                Ok(Ok(w)) => (true, w),
+                Ok(Err(e)) => (false, e),
+                Err(_) => (false, "the switch panicked (see the daemon's log)".to_string()),
             };
-            let s = state().unwrap_or_default();
+            let ticket = TICKET.fetch_add(1, Ordering::SeqCst) + 1;
+            let s = catch_unwind(state).ok().and_then(Result::ok).unwrap_or_default();
             let _ = qt.queue(move |mut k| {
-                if !s.is_empty() {
+                if !s.is_empty() && fresh(ticket) {
                     k.as_mut().set_state(QString::from(&s));
                 }
                 k.as_mut().set_busy(false);
@@ -255,15 +271,25 @@ fn follow_sun() {
     loop {
         std::thread::sleep(std::time::Duration::from_secs(60));
         let Ok(day) = sys.is_day() else { continue };
-        if last == Some(day) {
-            continue;
+        match last {
+            None => {
+                // the first read after a failed start only records where the sun is
+                last = Some(day);
+                continue;
+            }
+            Some(l) if l == day => continue,
+            Some(_) => {}
         }
-        last = Some(day);
+        // `last` moves only once the switch went through: a busy lock retries next minute
         match crate::follow_sun() {
             Ok(Some(done)) => eprintln!("kigae: {}: {done}", if day { "sunrise" } else { "sunset" }),
             Ok(None) => {}
-            Err(e) => eprintln!("kigae: following the sun: {e}"),
+            Err(e) => {
+                eprintln!("kigae: following the sun: {e}");
+                continue;
+            }
         }
+        last = Some(day);
         if let Some(t) = QT.lock().expect("lock").as_ref() {
             let _ = t.queue(|k| k.reload());
         }

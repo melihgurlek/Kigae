@@ -28,8 +28,34 @@ Window {
 
     // ── state ────────────────────────────────────────────────────────────────────
     readonly property var st: { try { return JSON.parse(kigae.state || "{}") } catch (e) { return {} } }
-    readonly property var cards: st.cards || []
+    // the card list is only reassigned when it really differs, so a refresh that changes nothing
+    // (the same rices, a new history line) doesn't rebuild every card
+    property var cards: []
+    property string cardsJson: "[]"
     readonly property int n: cards.length
+    function syncCards() {
+        const c = st.cards || []
+        const j = JSON.stringify(c)
+        if (j === cardsJson) return
+        cardsJson = j
+        cards = c
+    }
+    // what the daemon says is wrong with the state itself (no rices, an unreadable config)
+    readonly property string stateMsg: st.error ? String(st.error)
+        : (kigae.state && n === 0 ? "no rices found — see `kigae doctor`" : "")
+    readonly property string toastMsg: error || stateMsg
+    onStChanged: {
+        syncCards()
+        // the first state after open() is the real one: pick the card after the current rice from it
+        if (awaitFresh && visible && !stepping && Date.now() - openedAt < 3000) {
+            awaitFresh = false
+            jump = true
+            sel = pickSel()
+            pos = sel
+            jump = false
+        }
+    }
+    Component.onCompleted: syncCards()
     readonly property real anim: st.anim === undefined ? 1 : st.anim
     function dur(ms) { return Math.round(ms * anim) }
 
@@ -42,6 +68,11 @@ Window {
     property bool stepping: false       // the chosen card is filling the screen
     property double shownAt: 0
     property string error: ""
+    property bool closing: false        // fading out; the hotkey reopens instead of stepping
+    property int session: 0             // counts openings: results of earlier ones are ignored
+    property int reqSession: -1         // the opening the running apply/undo was asked in
+    property bool awaitFresh: false     // open() ran, no state has arrived since, nobody has moved
+    property double openedAt: 0
 
     readonly property var selCard: n ? cards[Math.max(0, Math.min(sel, n - 1))] : null
     // auto: the look for now, and the daemon follows the sun from there
@@ -78,18 +109,27 @@ Window {
 
     // ── open, move, wear, close ──────────────────────────────────────────────────
     function request() {
-        if (!visible) { open(); return }
+        if (!visible || closing) { open(); return }
         if (stepping) return
         if (Date.now() - shownAt < 120) return        // the same press, twice
         shownAt = Date.now()
         step(1)                                       // T tapped again while Meta+Shift held
     }
 
-    function open() {
-        kigae.reload()
+    function pickSel() {
         const cur = cards.findIndex(c => c.id === st.current)
+        return n ? (cur + 1) % n : 0
+    }
+
+    function open() {
+        fadeOut.stop()
+        closing = false
+        session++
+        awaitFresh = true
+        openedAt = Date.now()
+        kigae.reload()
         jump = true
-        sel = n ? (cur + 1) % n : 0
+        sel = pickSel()
         pos = sel
         jump = false
         moods = ({})
@@ -106,8 +146,16 @@ Window {
         fadeIn.restart()
     }
 
+    // signed steps to card i the short way round (a plain index delta goes the long way)
+    function shortest(i) {
+        let d = ((i - sel) % n + n) % n
+        if (d > n / 2) d -= n
+        return d
+    }
+
     function step(d) {
         if (!n || stepping) return
+        awaitFresh = false
         const next = (sel + d + n) % n
         if (n >= 4) pos += d                          // go round
         sel = next
@@ -131,14 +179,22 @@ Window {
         // already wearing it: only a different look is a change (auto = the look for now)
         if (c.id === st.current && (!c.daynight || (mood || st.mood) === st.worn)) { close(); return }
         error = ""
+        awaitFresh = false
         stepping = true
+        reqSession = session
         const r = rail.itemAt(sel)
         veil.from = r ? r.mapToItem(null, 0, 0, r.width, r.height * r.scale / r.scale) : Qt.rect(0, 0, width, height)
         veil.start(lookOf(c))
         kigae.apply(c.id, mood)
     }
 
+    function undo() {
+        reqSession = session
+        kigae.undo()
+    }
+
     function done(ok, message) {
+        if (reqSession !== session) return            // answers an earlier opening; that room is gone
         if (!stepping) {                              // undo from the drawer
             error = ok ? "" : message
             if (ok) close()
@@ -154,6 +210,9 @@ Window {
     }
 
     function close() {
+        if (closing) return
+        closing = true
+        awaitFresh = false
         fadeOut.restart()
     }
 
@@ -177,7 +236,7 @@ Window {
             NumberAnimation { target: rail; property: "opacity"; to: 0; duration: win.dur(160) }
             NumberAnimation { target: veil; property: "opacity"; to: 0; duration: win.dur(200) }
         }
-        ScriptAction { script: { win.visible = false; win.stepping = false; veil.visible = false } }
+        ScriptAction { script: { win.visible = false; win.stepping = false; win.closing = false; veil.visible = false } }
     }
 
     // ── the room: the selected rice's wallpaper, blurred and dimmed ─────────────
@@ -191,11 +250,15 @@ Window {
         Item {
             id: walls
             anchors.fill: parent
+            // blurred at a third of the resolution: it is a heavy blur, and the crossfades
+            // re-render it every frame
             layer.enabled: true
+            layer.smooth: true
+            layer.textureSize: Qt.size(Math.max(1, Math.round(win.width / 3)), Math.max(1, Math.round(win.height / 3)))
             layer.effect: MultiEffect {
                 blurEnabled: true
                 blur: 1.0
-                blurMax: 64
+                blurMax: 22
                 saturation: -0.1
                 brightness: -0.08
             }
@@ -247,7 +310,7 @@ Window {
         fillMode: Image.PreserveAspectCrop
         asynchronous: true
         cache: true
-        sourceSize.width: 1600
+        sourceSize.width: 960
         opacity: shown && status === Image.Ready ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: win.dur(420); easing.type: Easing.InOutQuad } }
         onStatusChanged: if (status === Image.Ready) walls.ready(this)
@@ -340,7 +403,7 @@ Window {
                     angle: Math.max(-34, Math.min(34, -rc.d * 30))
                 }
 
-                onPicked: index === win.sel ? win.wear() : win.step(index - win.sel)
+                onPicked: index === win.sel ? win.wear() : win.step(win.shortest(index))
                 onMoodPicked: m => win.setMood(modelData, m)
             }
         }
@@ -388,11 +451,11 @@ Window {
 
     Rectangle {
         id: toast
-        visible: win.error.length > 0
+        visible: win.toastMsg.length > 0
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 92
-        width: Math.min(win.width * 0.6, toastText.implicitWidth + 48 + undoBtn.width)
+        width: Math.min(win.width * 0.6, toastText.implicitWidth + 48)
         height: toastText.implicitHeight + 28
         radius: 14
         color: Qt.rgba(0.10, 0.06, 0.06, 0.92)
@@ -402,26 +465,14 @@ Window {
         Text {
             id: toastText
             anchors.left: parent.left
-            anchors.leftMargin: 20
-            anchors.right: undoBtn.left
-            anchors.rightMargin: 12
+            anchors.leftMargin: 24
+            anchors.right: parent.right
+            anchors.rightMargin: 24
             anchors.verticalCenter: parent.verticalCenter
-            text: win.error
+            text: win.toastMsg
             color: "#f6dcd6"
             font.pixelSize: 14
             wrapMode: Text.Wrap
-        }
-        Rectangle {
-            id: undoBtn
-            anchors.right: parent.right
-            anchors.rightMargin: 12
-            anchors.verticalCenter: parent.verticalCenter
-            width: undoText.implicitWidth + 24
-            height: 30
-            radius: 8
-            color: Qt.rgba(1, 1, 1, 0.1)
-            Text { id: undoText; anchors.centerIn: parent; text: "Undo last switch"; color: "#f6dcd6"; font.pixelSize: 13 }
-            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: kigae.undo() }
         }
     }
 
@@ -445,6 +496,8 @@ Window {
         }
 
         function start(look) {
+            shrink.stop()                             // a grow right after a failed switch's shrink
+            dissolve.stop()
             veilImg.path = look && look.wallpaper ? look.wallpaper : (win.selCard.preview || "")
             t = 0
             opacity = 1
@@ -461,7 +514,10 @@ Window {
             anchors.fill: parent
             source: win.fileUrl(path)
             fillMode: Image.PreserveAspectCrop
-            sourceSize.width: 2560
+            asynchronous: true                        // never block the GUI thread on Enter
+            sourceSize.width: 1600                    // full screen, so sharper than the room's
+            opacity: status === Image.Ready ? 1 : 0   // the dark card shows until it has decoded
+            Behavior on opacity { NumberAnimation { duration: win.dur(120) } }
         }
         Rectangle {                                   // a quiet "dressing" mark while it works
             anchors.centerIn: parent
@@ -482,7 +538,7 @@ Window {
         SequentialAnimation {
             id: dissolve
             NumberAnimation { target: veil; property: "t"; to: 1; duration: win.dur(120) }
-            PauseAnimation { duration: 400 }          // let plasmashell settle under the veil
+            PauseAnimation { duration: Math.max(150, win.dur(400)) }   // let plasmashell settle under the veil
             ScriptAction { script: { room.opacity = 0; rail.opacity = 0 } }
             NumberAnimation { target: veil; property: "opacity"; to: 0; duration: win.dur(450); easing.type: Easing.InOutQuad }
             ScriptAction { script: { win.visible = false; win.stepping = false; veil.visible = false } }
@@ -545,7 +601,7 @@ Window {
                 border.width: 1
                 border.color: Qt.alpha(win.accent, 0.6)
                 Text { id: undoLbl; anchors.centerIn: parent; text: kigae.busy ? "undoing…" : "Undo last switch"; color: win.chrome; font.pixelSize: 14 }
-                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: kigae.undo() }
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: win.undo() }
             }
 
             Item { width: 1; height: 18 }
