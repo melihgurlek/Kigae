@@ -124,7 +124,8 @@ fn record_path(paths: &Paths, id: &str) -> PathBuf {
 }
 
 /// Write the planned items. Files that exist with other contents are only overwritten with
-/// `force`. Returns what was written; the record of installed files is updated either way.
+/// `force`. Returns what was written; the record of installed files (only those) is updated
+/// either way.
 pub fn run(items: &[Item], force: bool, paths: &Paths, id: &str) -> Result<Vec<PathBuf>, String> {
     let conflicts: Vec<String> =
         items.iter().filter(|i| i.state == State::Differs).map(|i| i.dest.display().to_string()).collect();
@@ -162,7 +163,8 @@ pub fn run(items: &[Item], force: bool, paths: &Paths, id: &str) -> Result<Vec<P
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default();
-    all.extend(items.iter().map(|i| i.dest.clone()));
+    // only what we wrote: a file that was already there (State::Same) isn't ours to remove
+    all.extend(written.iter().cloned());
     all.sort();
     all.dedup();
     fs::create_dir_all(record.parent().expect("has parent")).map_err(|e| e.to_string())?;
@@ -190,4 +192,28 @@ pub fn uninstall(paths: &Paths, id: &str) -> Result<Vec<PathBuf>, String> {
     }
     fs::remove_file(&record).map_err(|e| e.to_string())?;
     Ok(removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uninstall_leaves_files_it_did_not_write() {
+        let home = std::env::temp_dir().join(format!("kigae-install-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).unwrap();
+        let paths = Paths { home: home.clone(), state: home.join("state") };
+        let (shared, own) = (home.join("shared.txt"), home.join("own.txt"));
+        fs::write(&shared, b"same").unwrap();
+        let item = |dest: &Path| {
+            let kind = Kind::File { executable: false };
+            Item { dest: dest.into(), contents: b"same".to_vec(), kind, state: state(dest, b"same", kind) }
+        };
+        let items = [item(&shared), item(&own)];
+        assert_eq!(run(&items, false, &paths, "a").unwrap(), vec![own.clone()]);
+        assert_eq!(uninstall(&paths, "a").unwrap(), vec![own.clone()]);
+        assert!(shared.exists() && !own.exists());
+        fs::remove_dir_all(home).unwrap();
+    }
 }

@@ -188,10 +188,22 @@ pub fn apply<S: Sys>(
             Ok(()) => {}
             Err(ApplyError::Sys(err)) if critical => {
                 let rollback = undo_entries(run.sys, paths, &run.journal.entries);
-                run.journal.set_status(Status::RolledBack)?;
+                // a rollback that failed leaves the journal open, so `kigae undo` still finds it
+                if rollback.is_empty() {
+                    run.journal.set_status(Status::RolledBack)?;
+                }
                 return Err(ApplyError::Critical { step, err, rollback });
             }
             Err(ApplyError::Sys(err)) => run.warnings.push(format!("{step}: {err}")),
+            Err(e @ ApplyError::Journal(_)) => {
+                // the journal can't be saved, so put back what we can from memory
+                let rollback = undo_entries(run.sys, paths, &run.journal.entries);
+                return Err(if rollback.is_empty() {
+                    e
+                } else {
+                    ApplyError::Journal(std::io::Error::other(format!("{e}{}", rollback_note(&rollback))))
+                });
+            }
             Err(e) => return Err(e),
         }
     }
@@ -350,9 +362,9 @@ pub fn file_url_path(url: &str) -> PathBuf {
     while i < bytes.len() {
         if bytes[i] == b'%'
             && i + 2 < bytes.len()
-            && let Ok(b) = u8::from_str_radix(&raw[i + 1..i + 3], 16)
+            && let (Some(hi), Some(lo)) = ((bytes[i + 1] as char).to_digit(16), (bytes[i + 2] as char).to_digit(16))
         {
-            out.push(b);
+            out.push((hi * 16 + lo) as u8);
             i += 3;
             continue;
         }
@@ -546,7 +558,8 @@ pub fn doctor<S: Sys>(sys: &mut S, paths: &Paths, m: &Manifest) -> Vec<String> {
             problems.push(format!("wallpaper {w} doesn't exist"));
         }
     }
-    problems.dedup();
+    let mut seen = BTreeSet::new();
+    problems.retain(|p| seen.insert(p.clone()));
     for (link, target) in &m.links {
         if !sys.exists(&paths.expand(target)) {
             problems.push(format!("link {link} points at {target}, which doesn't exist"));
