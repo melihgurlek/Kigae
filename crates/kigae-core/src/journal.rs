@@ -37,8 +37,13 @@ pub enum Status {
     Undone,
 }
 
+/// How many journals `save` keeps around; older ones are deleted when a new one is first saved.
+const KEEP: usize = 50;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Journal {
+    /// Milliseconds since the epoch; also the id for `kigae undo <ts>`. Journals written by
+    /// older versions hold seconds (see [`Journal::when_secs`]); they sort before new ones.
     pub ts: u64,
     pub from: Option<String>,
     pub to: String,
@@ -54,9 +59,17 @@ impl Journal {
     pub fn new(from: Option<&str>, to: &str, mood: Option<&str>, dir: Option<&Path>) -> Self {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
+            .map(|d| d.as_millis() as u64)
             .unwrap_or_default();
-        let path = dir.map(|d| d.join(format!("{ts}-{}-{to}.json", from.unwrap_or("unknown"))));
+        let name = |ts: u64| format!("{ts}-{}-{to}.json", from.unwrap_or("unknown"));
+        // never overwrite an earlier switch with the same from/to
+        let mut ts = ts;
+        if let Some(d) = dir {
+            while d.join(name(ts)).exists() {
+                ts += 1;
+            }
+        }
+        let path = dir.map(|d| d.join(name(ts)));
         Journal {
             ts,
             from: from.map(str::to_string),
@@ -66,6 +79,11 @@ impl Journal {
             entries: vec![],
             path,
         }
+    }
+
+    /// When it happened, in seconds since the epoch (old journals stored seconds, new ones ms).
+    pub fn when_secs(&self) -> u64 {
+        if self.ts < 100_000_000_000 { self.ts } else { self.ts / 1000 }
     }
 
     pub fn push(&mut self, entry: Entry) -> std::io::Result<()> {
@@ -84,9 +102,25 @@ impl Journal {
             fs::create_dir_all(dir)?;
         }
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+        let first = !path.exists();
         let tmp = path.with_extension("json.tmp");
         fs::write(&tmp, json)?;
-        fs::rename(tmp, path)
+        fs::rename(tmp, path)?;
+        if first && let Some(dir) = path.parent() {
+            self.prune(dir);
+        }
+        Ok(())
+    }
+
+    /// Delete all but the newest [`KEEP`] journals in `dir`; this one always stays.
+    fn prune(&self, dir: &Path) {
+        let Ok(all) = Journal::list(dir) else { return };
+        let excess = all.len().saturating_sub(KEEP);
+        for old in all.iter().take(excess).filter(|j| j.path != self.path) {
+            if let Some(p) = &old.path {
+                let _ = fs::remove_file(p);
+            }
+        }
     }
 
     pub fn load(path: &Path) -> std::io::Result<Self> {
@@ -106,7 +140,10 @@ impl Journal {
         for e in entries {
             let p = e?.path();
             if p.extension().is_some_and(|x| x == "json") {
-                out.push(Journal::load(&p)?);
+                match Journal::load(&p) {
+                    Ok(j) => out.push(j),
+                    Err(e) => eprintln!("kigae: skipping unreadable journal {}: {e}", p.display()),
+                }
             }
         }
         out.sort_by_key(|j| (j.ts, j.path.clone()));
@@ -129,6 +166,55 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].entries, j.entries);
         assert_eq!(all[0].status, Status::Done);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kigae-journal-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn same_millisecond_same_pair_keeps_both() {
+        let dir = scratch("clash");
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..20 {
+            let j = Journal::new(Some("a"), "b", None, Some(&dir));
+            j.save().unwrap();
+            assert!(seen.insert(j.path.clone()), "overwrote {:?}", j.path);
+        }
+        assert_eq!(Journal::list(&dir).unwrap().len(), 20);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn bad_files_are_skipped_and_old_second_journals_sort_first() {
+        let dir = scratch("bad");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("1700000000-a-b.json"), r#"{"ts":1700000000,"from":"a","to":"b","mood":null,"status":"done","entries":[]}"#).unwrap();
+        fs::write(dir.join("garbage.json"), "{nope").unwrap();
+        Journal::new(Some("a"), "b", None, Some(&dir)).save().unwrap();
+        let all = Journal::list(&dir).unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].ts, 1700000000);
+        assert_eq!(all[0].when_secs(), 1700000000);
+        assert_eq!(all[1].when_secs(), all[1].ts / 1000);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn keeps_the_newest_fifty() {
+        let dir = scratch("prune");
+        fs::create_dir_all(&dir).unwrap();
+        for i in 1..=55u64 {
+            let j = Journal { ts: i, from: None, to: "b".into(), mood: None, status: Status::Done, entries: vec![], path: Some(dir.join(format!("{i}-x-b.json"))) };
+            fs::write(j.path.as_ref().unwrap(), serde_json::to_string(&j).unwrap()).unwrap();
+        }
+        Journal::new(Some("a"), "b", None, Some(&dir)).save().unwrap();
+        let all = Journal::list(&dir).unwrap();
+        assert_eq!(all.len(), KEEP);
+        assert_eq!(all[0].ts, 7, "the oldest six went");
         fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -181,6 +181,23 @@ fn critical_failure_rolls_back() {
 }
 
 #[test]
+fn failed_rollback_keeps_the_journal_open() {
+    let (ukiyo, og) = rices();
+    let mut sys = ukiyo_desktop();
+    // fails going forward, and again when the style is put back
+    sys.fail_on = Some("plasma-apply-desktoptheme".into());
+    let dir = std::env::temp_dir().join(format!("kigae-engine-{}", std::process::id()));
+    let p = Paths { home: "/h".into(), state: dir.clone() };
+    let o = Opts { no_journal: false, ..opts() };
+    let err = apply(&mut sys, &p, Some(&ukiyo), target(&og, "OG-LAYOUT"), o).unwrap_err();
+    assert!(matches!(err, ApplyError::Critical { ref rollback, .. } if !rollback.is_empty()), "{err}");
+    let journals = Journal::list(&p.undo_dir()).unwrap();
+    assert_eq!(journals.len(), 1);
+    assert_eq!(journals[0].status, Status::InProgress);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn non_critical_failure_is_a_warning() {
     let (ukiyo, og) = rices();
     let mut sys = ukiyo_desktop();
@@ -285,5 +302,8 @@ fn doctor_reports_missing_parts() {
 fn decodes_file_urls() {
     assert_eq!(file_url_path("file:///a/Fedora%20Backup/x.jpg"), std::path::PathBuf::from("/a/Fedora Backup/x.jpg"));
     assert_eq!(file_url_path("file:///a/b c.jpg"), std::path::PathBuf::from("/a/b c.jpg"));
+    assert_eq!(file_url_path("/a/100%aé.jpg"), std::path::PathBuf::from("/a/100%aé.jpg"), "no slicing inside a character");
+    assert_eq!(file_url_path("/a%+f"), std::path::PathBuf::from("/a%+f"), "a sign is not a hex digit");
+    assert_eq!(file_url_path("/a%C3%A9%2f"), std::path::PathBuf::from("/aé/"));
     assert_eq!(file_url_path("/plain%2"), std::path::PathBuf::from("/plain%2"));
 }
