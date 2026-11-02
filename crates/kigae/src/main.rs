@@ -10,7 +10,8 @@ use kigae_core::discover::{Rice, discover};
 use kigae_core::engine::{self, Opts, Paths, Target};
 use kigae_core::journal::{Journal, Status};
 use kigae_core::manifest::{Manifest, MoodKind, UnsetPolicy};
-use kigae_core::sys::{DryRun, FileState, RealSys, Sys};
+use kigae_core::sys::{Action, DryRun, FileState, RealSys, Sys};
+use kigae_core::card;
 use kigae_core::install;
 use kigae_core::capture;
 
@@ -203,7 +204,7 @@ fn main() -> ExitCode {
         Command::Setup { remove } => if remove { setup::remove() } else { setup::install() },
         #[cfg(not(feature = "overlay"))]
         Command::Daemon | Command::Overlay | Command::Setup { .. } => Err("built without the overlay feature".into()),
-        Command::Shoot { .. } => Err("not built yet (phase 3 in PLAN.md)".into()),
+        Command::Shoot { ids } => shoot(&ids),
         Command::Deep { .. } => Err("not built yet (phase 4 in PLAN.md)".into()),
     };
     match result {
@@ -282,9 +283,8 @@ fn apply(id: &str, dry_run: bool, mood: Option<Mood>, from: Option<&str>, force:
     Ok(())
 }
 
-/// Switch to `id` for the overlay: no dry run, no `--force`, the rice on screen as `from`. The rice
-/// already on screen only changes its day/night look, like `kigae mood`.
-#[cfg(feature = "overlay")]
+/// Switch to `id` for the overlay and `shoot`: no dry run, no `--force`, the rice on screen as
+/// `from`. The rice already on screen only changes its day/night look, like `kigae mood`.
 fn switch(id: &str, mood: Option<MoodKind>) -> Res<engine::Outcome> {
     let c = ctx()?;
     let mut real = RealSys::new();
@@ -318,6 +318,78 @@ fn follow_sun() -> Res<Option<String>> {
     let out = engine::apply(&mut real, &c.paths, Some(&m), Target { manifest: &m, layout_js: None }, opts)
         .map_err(|e| e.to_string())?;
     Ok(Some(format!("{}{}", rice.id(), mood_label(out.mood))))
+}
+
+/// Wear each rice (each look of a day/night rice), hide the windows and screenshot it for its
+/// card; then put back the rice and look that were on.
+fn shoot(ids: &[String]) -> Res {
+    let c = ctx()?;
+    let mut real = RealSys::new();
+    let (start, _) = c.current(&mut real).ok_or("can't tell which rice is on screen; apply one first")?;
+    let start_id = start.id().to_string();
+    let last = Journal::list(&c.paths.undo_dir()).ok().and_then(|j| j.into_iter().last());
+    let start_mood = last.filter(|j| j.to == start_id).and_then(|j| j.mood).map(|m| mood_kind(&m));
+    let mut rices: Vec<&Rice> =
+        if ids.is_empty() { c.rices.iter().collect() } else { ids.iter().map(|i| c.rice(i)).collect::<Res<_>>()? };
+    // the rice on screen first, and last of its looks the one it's wearing: fewer switches
+    rices.sort_by_key(|r| r.id() != start_id);
+    let dir = card::shots_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut failed = vec![];
+    for r in rices {
+        let mut moods = if r.manifest.daynight.is_some() { vec![MoodKind::Light, MoodKind::Dark] } else { vec![] };
+        if r.id() == start_id && start_mood == Some(MoodKind::Light) {
+            moods.reverse();
+        }
+        let moods: Vec<Option<MoodKind>> = if moods.is_empty() { vec![None] } else { moods.into_iter().map(Some).collect() };
+        for mood in moods {
+            let label = format!("{}{}", r.id(), mood_label(mood));
+            let path = dir.join(card::shot_name(r.id(), mood));
+            match switch(r.id(), mood).and_then(|_| take_shot(&mut real, &path)) {
+                Ok(()) => println!("{label}: {}", path.display()),
+                Err(e) => {
+                    eprintln!("kigae: {label}: {e}");
+                    failed.push(label);
+                }
+            }
+        }
+    }
+    let back = switch(&start_id, start_mood).map_err(|e| format!("putting {start_id} back: {e} (kigae apply {start_id})"));
+    println!("back on {start_id}{}", mood_label(start_mood));
+    back?;
+    if failed.is_empty() { Ok(()) } else { Err(format!("no shot of {}", failed.join(", "))) }
+}
+
+/// Let the switch settle, hide every window, screenshot the screen, bring the windows back.
+fn take_shot(sys: &mut RealSys, path: &std::path::Path) -> Res {
+    use std::time::Duration;
+    // plasmashell's new panels, the wallpaper crossfade and KWin's effects
+    std::thread::sleep(Duration::from_millis(2500));
+    sys.act(&Action::ShowDesktop(true)).map_err(|e| e.to_string())?;
+    std::thread::sleep(Duration::from_millis(900));
+    let _ = std::fs::remove_file(path);
+    let shot = std::process::Command::new("spectacle")
+        .args(["--background", "--nonotify", "--fullscreen", "--output"])
+        .arg(path)
+        .status()
+        .map_err(|e| format!("spectacle: {e}"));
+    // spectacle may return before the file is written
+    for _ in 0..50 {
+        if path.is_file() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = sys.act(&Action::ShowDesktop(false));
+    match shot? {
+        s if !s.success() => Err(format!("spectacle exited with {s}")),
+        _ if !path.is_file() => Err("spectacle saved nothing".into()),
+        _ => Ok(()),
+    }
+}
+
+fn mood_kind(m: &str) -> MoodKind {
+    if m == "light" { MoodKind::Light } else { MoodKind::Dark }
 }
 
 fn mood_label(m: Option<MoodKind>) -> String {

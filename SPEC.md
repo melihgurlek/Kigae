@@ -38,6 +38,7 @@ kigae (one binary)
   ```
 - Lookup order for each rice: `git show <branch>:rice.toml`, then the manifests folder (for rices whose branch you'd rather not touch, or that have no branch). A local manifest names its branch with `branch = "…"`, and its `./…` paths resolve next to it.
 - Previews are read with `git show <branch>:<preview>` and cached at `~/.cache/kigae/previews/<id>-<blob-sha>.jpg`. Nothing is ever checked out, so the repo can stay on any branch.
+- `kigae shoot [<id>...]` takes the screenshots instead: it wears each rice (both looks of a `[daynight]` rice), waits 2.5 s, hides every window with KWin's Show Desktop, runs `spectacle --background --nonotify --fullscreen`, brings the windows back, and finally puts back the rice and look that were on. Shots go to `~/.config/kigae/previews/<id>.jpg` or `<id>-light.jpg` / `<id>-dark.jpg`; a card shows the shot of the selected look first, then the manifest's `preview`, then the wallpaper. Every switch is journaled like any other.
 - `~/.config/kigae` can itself be a branch of the dotfiles repo, checked out as a git worktree. Then `config.toml`, `base.toml` and the manifests are versioned like any other dotfile and readable whatever rice branch is checked out (vortex does this: branch `kigae`, with og's manifest, since `backup/og` stays untouched).
 
 ## 3. Manifest (`rice.toml`)
@@ -241,6 +242,7 @@ kigae setup [--remove]           start the daemon at login, bind Meta+Shift+T
 | `~/.local/state/kigae/undo/*.json` | one journal per switch |
 | `~/.local/state/kigae/installed/<id>.json` | every file `install` copied |
 | `~/.cache/kigae/previews/` | preview images taken from git |
+| `~/.config/kigae/previews/` | `kigae shoot`'s screenshots, one per look |
 
 ## 11. Safety rules (non-negotiable)
 

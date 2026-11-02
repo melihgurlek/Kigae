@@ -81,7 +81,7 @@ Next (pick up here):
 ## Phase 3: Catppuccin + previews
 
 - Catppuccin: apply it the old way once, then `kigae capture catppuccin-mocha`
-- `kigae shoot`: apply each rice and take a screenshot with `spectacle -b -f -n -o`
+- [x] `kigae shoot`: wears each look of each rice, hides the windows (KWin Show Desktop), screenshots with spectacle, puts back what was on; cards show the selected look's shot. Live: 4 shots (Ukiyo and og, day and night) in 33 s, back on Ukiyo dark (2026-11-02)
 
 ## Phase 4: deep switch
 

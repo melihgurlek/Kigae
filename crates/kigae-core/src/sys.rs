@@ -46,6 +46,8 @@ pub enum Action {
     /// `kwriteconfig6`; `value: None` deletes the key.
     KWrite { file: String, groups: Vec<String>, key: String, value: Option<String>, boolean: bool },
     KWinReconfigure,
+    /// KWin's Show Desktop: hide every window (`kigae shoot`) or bring them back.
+    ShowDesktop(bool),
     /// A plasmashell script; `delay_ms` lets panels created by the previous script settle.
     EvaluateScript { what: String, script: String, delay_ms: u64 },
     WriteFile { path: PathBuf, contents: String },
@@ -68,6 +70,7 @@ impl fmt::Display for Action {
                 }
             }
             Action::KWinReconfigure => write!(f, "KWin reconfigure"),
+            Action::ShowDesktop(on) => write!(f, "KWin show desktop {}", if *on { "on" } else { "off" }),
             Action::EvaluateScript { what, .. } => write!(f, "plasmashell script: {what}"),
             Action::WriteFile { path, contents } => {
                 write!(f, "write {} ({} bytes)", path.display(), contents.len())
@@ -144,6 +147,25 @@ impl RealSys {
         let err = |e: zbus::Error| SysError::DBus { call, err: e.to_string() };
         let reply = bus.call_method(Some(dest), path, Some(iface), method, body).map_err(err)?;
         reply.body().deserialize::<R>().map_err(err)
+    }
+
+    fn kwin_noreply<B>(&mut self, call: &'static str, method: &'static str, body: &B) -> Result<()>
+    where
+        B: serde::Serialize + zbus::zvariant::DynamicType,
+    {
+        let bus = self.bus(call)?;
+        let err = |e: zbus::Error| SysError::DBus { call, err: e.to_string() };
+        let msg = zbus::message::Message::method_call("/KWin", method)
+            .map_err(err)?
+            .destination("org.kde.KWin")
+            .map_err(err)?
+            .interface("org.kde.KWin")
+            .map_err(err)?
+            .with_flags(zbus::message::Flags::NoReplyExpected)
+            .map_err(err)?
+            .build(body)
+            .map_err(err)?;
+        bus.send(&msg).map_err(err)
     }
 
     fn evaluate(&mut self, script: &str) -> Result<String> {
@@ -348,22 +370,9 @@ impl RealSys {
                 }
                 run(&argv).map(drop)
             }
-            Action::KWinReconfigure => {
-                // `reconfigure` is no-reply: send it without waiting for an answer
-                let bus = self.bus("KWin reconfigure")?;
-                let err = |e: zbus::Error| SysError::DBus { call: "KWin reconfigure", err: e.to_string() };
-                let msg = zbus::message::Message::method_call("/KWin", "reconfigure")
-                    .map_err(err)?
-                    .destination("org.kde.KWin")
-                    .map_err(err)?
-                    .interface("org.kde.KWin")
-                    .map_err(err)?
-                    .with_flags(zbus::message::Flags::NoReplyExpected)
-                    .map_err(err)?
-                    .build(&())
-                    .map_err(err)?;
-                bus.send(&msg).map_err(err)
-            }
+            // both are no-reply: send without waiting for an answer
+            Action::KWinReconfigure => self.kwin_noreply("KWin reconfigure", "reconfigure", &()),
+            Action::ShowDesktop(on) => self.kwin_noreply("KWin showDesktop", "showDesktop", &(*on,)),
             Action::EvaluateScript { .. } => unreachable!("handled in act"),
             Action::WriteFile { path, contents } => {
                 if let Some(dir) = path.parent() {
@@ -548,7 +557,7 @@ impl Sys for FakeSys {
                     s.active = *a;
                 }
             }
-            Action::Shell(_) | Action::KWinReconfigure | Action::ReloadKitty => {}
+            Action::Shell(_) | Action::KWinReconfigure | Action::ShowDesktop(_) | Action::ReloadKitty => {}
         }
         Ok(String::new())
     }
