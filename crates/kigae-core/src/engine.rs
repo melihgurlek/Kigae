@@ -64,6 +64,16 @@ impl Paths {
         }
     }
 
+    /// A KConfig value that names a file in home, `~/x` or `file://~/x`, with the home spelled
+    /// out (KConfig doesn't expand `~`); anything else as is. Lets a manifest stay portable.
+    pub fn expand_value(&self, s: &str) -> String {
+        match s.strip_prefix("file://~/") {
+            Some(rest) => format!("file://{}", self.home.join(rest).display()),
+            None if s.starts_with("~/") => self.expand(s).display().to_string(),
+            None => s.to_string(),
+        }
+    }
+
     pub fn current(&self) -> PathBuf {
         self.state.join("current")
     }
@@ -166,7 +176,7 @@ pub fn apply<S: Sys>(
     };
     let steps: Vec<Step<'_, S>> = vec![
         ("services-stop", true, Box::new(|r| if full { services_stop(r, from, m) } else { Ok(()) })),
-        ("kconfig", true, Box::new(|r| kconfig(r, from, m, &look, opts.unset.kconfig))),
+        ("kconfig", true, Box::new(|r| kconfig(r, paths, from, m, &look, opts.unset.kconfig))),
         ("colors", true, Box::new(|r| plasma_part(r, look.colors.as_deref(), Part::Colors))),
         ("style", true, Box::new(|r| plasma_part(r, look.style.as_deref(), Part::Style))),
         ("icons", true, Box::new(|r| plasma_part(r, look.icons.as_deref(), Part::Icons))),
@@ -242,6 +252,7 @@ fn services_start<S: Sys>(r: &mut Run<'_, S>, to: &Manifest) -> Result<(), Apply
 
 fn kconfig<S: Sys>(
     r: &mut Run<'_, S>,
+    paths: &Paths,
     from: Option<&Manifest>,
     to: &Manifest,
     look: &crate::manifest::Look,
@@ -257,6 +268,7 @@ fn kconfig<S: Sys>(
     for (file, keys) in &look.kconfig {
         for (key, value) in keys {
             let (v, b) = kconfig_value(value).expect("validated");
+            let v = if b { v } else { paths.expand_value(&v) };
             want.push((file.clone(), key.clone(), v, b));
         }
     }
