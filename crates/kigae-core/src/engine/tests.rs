@@ -307,3 +307,12 @@ fn decodes_file_urls() {
     assert_eq!(file_url_path("/a%C3%A9%2f"), std::path::PathBuf::from("/aé/"));
     assert_eq!(file_url_path("/plain%2"), std::path::PathBuf::from("/plain%2"));
 }
+
+#[test]
+fn kconfig_values_naming_home_files_are_spelled_out() {
+    let paths = Paths { home: "/h".into(), state: "/h/.local/state/kigae".into() };
+    assert_eq!(paths.expand_value("file://~/a/lock.jpg"), "file:///h/a/lock.jpg");
+    assert_eq!(paths.expand_value("~/a.jpg"), "/h/a.jpg");
+    assert_eq!(paths.expand_value("org.kde.image"), "org.kde.image");
+    assert_eq!(paths.expand_value("file:///etc/x"), "file:///etc/x");
+}
