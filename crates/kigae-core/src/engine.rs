@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use crate::deep;
 use crate::journal::{Entry, Journal, Status};
 use crate::manifest::{Manifest, MoodKind, Unset, UnsetPolicy, kconfig_key, kconfig_value};
 use crate::sys::{Action, FileState, Sys, SysError};
@@ -189,6 +190,7 @@ pub fn apply<S: Sys>(
         ("links", false, Box::new(|r| if full { links(r, paths, from, m, opts.unset.links) } else { Ok(()) })),
         ("vscode", false, Box::new(|r| if full { vscode(r, paths, from, m, opts.unset.vscode) } else { Ok(()) })),
         ("services-start", false, Box::new(|r| if full { services_start(r, m) } else { Ok(()) })),
+        ("login", false, Box::new(|r| if full { login(r, m) } else { Ok(()) })),
         // after a mood change too: a rice's own timer (ukiyo-sky) takes over from the new look
         ("hooks", false, Box::new(|r| {
             for cmd in &m.hooks.after {
@@ -225,6 +227,25 @@ pub fn apply<S: Sys>(
     }
     run.journal.set_status(Status::Done)?;
     Ok(Outcome { journal: run.journal, mood, warnings: run.warnings })
+}
+
+/// Point the login screen at the rice's SDDM theme, when `kigae setup-login` made that possible
+/// without a password (otherwise `kigae deep` does it, and the CLI says so).
+fn login<S: Sys>(r: &mut Run<'_, S>, to: &Manifest) -> Result<(), ApplyError> {
+    let Some(theme) = &to.deep.sddm else { return Ok(()) };
+    if !r.sys.exists(Path::new(deep::LOGIN_HELPER)) || !r.sys.exists(Path::new(deep::LOGIN_POLICY)) {
+        return Ok(());
+    }
+    let old = r.sys.login_theme();
+    if old.as_deref() == Some(theme.as_str()) {
+        return Ok(());
+    }
+    // with no theme set there's nothing to put back: undo leaves the login as it is
+    if let Some(old) = old {
+        r.record(Entry::Login { old })?;
+    }
+    r.sys.act(&Action::Exec(deep::login_command(theme)))?;
+    Ok(())
 }
 
 fn services_stop<S: Sys>(r: &mut Run<'_, S>, from: Option<&Manifest>, to: &Manifest) -> Result<(), ApplyError> {
@@ -502,6 +523,7 @@ pub fn undo_entries<S: Sys>(sys: &mut S, paths: &Paths, entries: &[Entry]) -> Ve
             Entry::Unit { unit, old } => {
                 vec![Action::Unit { unit: unit.clone(), enable: Some(old.enabled), active: Some(old.active) }]
             }
+            Entry::Login { old } => vec![Action::Exec(deep::login_command(old))],
         };
         for a in actions {
             if let Err(err) = sys.act(&a) {

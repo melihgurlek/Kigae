@@ -123,6 +123,13 @@ enum Command {
         #[arg(long)]
         grub: bool,
     },
+    /// Let every switch set the login screen too: installs a root helper and a polkit rule
+    /// (asks for your password once)
+    SetupLogin {
+        /// Remove the helper and the polkit rule
+        #[arg(long)]
+        remove: bool,
+    },
     /// Run the D-Bus service and overlay
     Daemon,
     /// Ask the daemon to show the overlay (bound to Meta+Shift+T)
@@ -215,6 +222,7 @@ fn main() -> ExitCode {
         Command::Daemon | Command::Overlay | Command::Setup { .. } => Err("built without the overlay feature".into()),
         Command::Shoot { ids } => shoot(&ids),
         Command::Deep { id, dry_run, grub } => deep(&id, dry_run, grub),
+        Command::SetupLogin { remove } => setup_login(remove),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -566,15 +574,41 @@ fn capture_cmd(info: capture::Info, dry_run: bool, force: bool) -> Res {
 }
 
 
-/// After a switch: say so when the login screen still belongs to another rice (the deep switch
-/// needs root, so it never runs on its own).
+/// After a switch: say so when the login screen still belongs to another rice (the switch sets
+/// it only once `kigae setup-login` has run).
 fn login_hint(r: &Rice) {
     if let Some(t) = &r.manifest.deep.sddm {
         let now = deep_switch::login_theme();
         if now.as_deref() != Some(t.as_str()) {
-            eprintln!("kigae: the login screen is still {}; `kigae deep {}` switches it (asks for your password)",
+            let follow = if std::path::Path::new(deep_switch::LOGIN_HELPER).exists() {
+                ""
+            } else {
+                ", or `kigae setup-login` once makes every switch do it"
+            };
+            eprintln!("kigae: the login screen is still {}; `kigae deep {}` switches it{follow}",
                       now.as_deref().unwrap_or("the default"), r.id());
         }
+    }
+}
+
+/// Install (or remove) the login helper and its polkit action, behind one pkexec prompt.
+fn setup_login(remove: bool) -> Res {
+    let mut cmd = std::process::Command::new("pkexec");
+    cmd.args(["/bin/sh", "-c", deep_switch::SETUP_SCRIPT, "sh"]);
+    if remove {
+        cmd.arg("--remove");
+    } else {
+        cmd.args([deep_switch::LOGIN_SCRIPT, deep_switch::LOGIN_POLICY_XML]);
+    }
+    match cmd.status().map_err(|e| format!("pkexec: {e}"))?.code() {
+        Some(0) => {
+            if !remove {
+                println!("every switch now sets the login screen of rices with [deep] sddm (no password)");
+            }
+            Ok(())
+        }
+        Some(126) | Some(127) => Err("not authorised (pkexec was cancelled or denied)".into()),
+        c => Err(format!("setup failed (exit {})", c.map_or("?".into(), |c| c.to_string()))),
     }
 }
 

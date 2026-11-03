@@ -109,6 +109,8 @@ pub trait Sys {
     fn wallpaper(&mut self) -> Result<Option<String>>;
     /// Is the sun up, by Plasma's NightTime schedule.
     fn is_day(&mut self) -> Result<bool>;
+    /// The SDDM theme the login screen uses.
+    fn login_theme(&mut self) -> Option<String>;
     /// Do it; returns what a plasmashell script printed (empty otherwise).
     fn act(&mut self, action: &Action) -> Result<String>;
 }
@@ -356,6 +358,10 @@ impl Sys for RealSys {
         Ok((!v.is_empty()).then(|| v.to_string()))
     }
 
+    fn login_theme(&mut self) -> Option<String> {
+        crate::deep::login_theme()
+    }
+
     fn is_day(&mut self) -> Result<bool> {
         use std::collections::HashMap;
         use zbus::zvariant::{OwnedValue, Value};
@@ -523,6 +529,8 @@ pub struct FakeSys {
     pub scripts: Vec<String>,
     pub wallpaper: Option<String>,
     pub day: bool,
+    /// The SDDM theme; `pkexec kigae-login <theme>` actions change it.
+    pub login: Option<String>,
     pub actions: Vec<Action>,
     /// Make the action whose `Display` contains this fail.
     pub fail_on: Option<String>,
@@ -585,6 +593,10 @@ impl Sys for FakeSys {
         Ok(self.day)
     }
 
+    fn login_theme(&mut self) -> Option<String> {
+        self.login.clone()
+    }
+
     fn act(&mut self, action: &Action) -> Result<String> {
         if let Some(pat) = &self.fail_on
             && action.to_string().contains(pat.as_str())
@@ -613,6 +625,9 @@ impl Sys for FakeSys {
                     Some("plasma-apply-cursortheme") => set(self, "kcminputrc", "Mouse", "cursorTheme"),
                     Some("plasma-apply-wallpaperimage") => {
                         self.wallpaper = argv.get(1).map(|p| format!("file://{p}"));
+                    }
+                    Some("pkexec") if argv.get(1).map(String::as_str) == Some(crate::deep::LOGIN_HELPER) => {
+                        self.login = argv.get(2).cloned();
                     }
                     _ => {}
                 }
@@ -692,6 +707,9 @@ impl<S: Sys> Sys for DryRun<S> {
     }
     fn is_day(&mut self) -> Result<bool> {
         self.inner.is_day()
+    }
+    fn login_theme(&mut self) -> Option<String> {
+        self.inner.login_theme()
     }
     fn act(&mut self, action: &Action) -> Result<String> {
         self.actions.push(action.clone());
@@ -774,6 +792,9 @@ impl<S: Sys> Sys for Traced<S> {
     }
     fn is_day(&mut self) -> Result<bool> {
         self.time(|| "is day".into(), |s| s.is_day())
+    }
+    fn login_theme(&mut self) -> Option<String> {
+        self.time(|| "login theme".into(), |s| s.login_theme())
     }
     fn act(&mut self, action: &Action) -> Result<String> {
         self.time(|| action.to_string(), |s| s.act(action))

@@ -1,6 +1,10 @@
 //! The deep switch (SPEC.md §11): the parts of a rice that live outside `$HOME` and need root,
-//! the SDDM login theme and the GRUB theme. Never on the hotkey: `kigae deep <id>` runs them
-//! behind one pkexec prompt, and `kigae apply` only says when the login no longer matches.
+//! the SDDM login theme and the GRUB theme. `kigae deep <id>` runs them behind one pkexec prompt.
+//!
+//! The login can also follow every switch: `kigae setup-login` installs (once, as root) a helper
+//! that can do one thing, point SDDM at a theme already installed in /usr/share/sddm/themes, and
+//! a polkit action that lets the active session run it without a password. GRUB never follows a
+//! switch: it rewrites grub.cfg.
 
 use std::path::{Path, PathBuf};
 
@@ -8,6 +12,67 @@ pub const SDDM_CONF: &str = "/etc/sddm.conf";
 pub const SDDM_CONF_D: &str = "/etc/sddm.conf.d";
 pub const SDDM_THEMES: &str = "/usr/share/sddm/themes";
 pub const GRUB_DEFAULT: &str = "/etc/default/grub";
+
+/// The helper a switch runs as `pkexec LOGIN_HELPER <theme>` once `kigae setup-login` put it here.
+pub const LOGIN_HELPER: &str = "/usr/local/libexec/kigae-login";
+/// The polkit action that lets the active session run it without a password.
+pub const LOGIN_POLICY: &str = "/usr/share/polkit-1/actions/dev.kigae.login.policy";
+
+/// The helper itself: the SDDM half of ROOT_SCRIPT, as a file root owns.
+pub const LOGIN_SCRIPT: &str = r#"#!/bin/sh
+# kigae-login: point SDDM at an installed login theme (installed by `kigae setup-login`).
+# Runs as root through pkexec without a password, so it takes one theme name and nothing else.
+set -eu
+[ $# -eq 1 ] || { echo "usage: kigae-login <sddm theme>" >&2; exit 2; }
+theme=$1 conf=/etc/sddm.conf
+case $theme in ''|*[!A-Za-z0-9._-]*|.*) echo "bad theme name: $theme" >&2; exit 2;; esac
+[ -f "/usr/share/sddm/themes/$theme/metadata.desktop" ] || { echo "SDDM theme $theme is not installed" >&2; exit 1; }
+[ -e "$conf" ] || : > "$conf"
+[ -e "$conf.pre-kigae" ] || cp -a "$conf" "$conf.pre-kigae"
+if grep -q '^[[:space:]]*Current=' "$conf"; then
+  sed -i "s/^\([[:space:]]*\)Current=.*/\1Current=$theme/" "$conf"
+else
+  printf '\n[Theme]\nCurrent=%s\n' "$theme" >> "$conf"
+fi
+"#;
+
+pub const LOGIN_POLICY_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Kigae</vendor>
+  <action id="dev.kigae.login">
+    <description>Switch the login screen to the rice's theme</description>
+    <message>Kigae wants to switch the login screen theme</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/kigae-login</annotate>
+  </action>
+</policyconfig>
+"#;
+
+/// Root's half of `kigae setup-login`, as `pkexec /bin/sh -c SETUP_SCRIPT sh <helper> <policy>`
+/// (the files travel as arguments, like ROOT_SCRIPT), or with `--remove` as the only argument.
+pub const SETUP_SCRIPT: &str = r#"set -eu
+helper=/usr/local/libexec/kigae-login policy=/usr/share/polkit-1/actions/dev.kigae.login.policy
+if [ "$1" = --remove ]; then
+  rm -f "$helper" "$policy"
+  echo "removed $helper and $policy"
+  exit 0
+fi
+install -d -m 0755 /usr/local/libexec
+printf '%s' "$1" > "$helper.new" && chmod 0755 "$helper.new" && mv -f "$helper.new" "$helper"
+printf '%s' "$2" > "$policy.new" && chmod 0644 "$policy.new" && mv -f "$policy.new" "$policy"
+echo "installed $helper and $policy"
+"#;
+
+/// The command a switch runs to point the login at `theme` (no password once set up).
+pub fn login_command(theme: &str) -> Vec<String> {
+    vec!["pkexec".into(), LOGIN_HELPER.into(), theme.into()]
+}
 
 /// What root runs, as `pkexec /bin/sh -c ROOT_SCRIPT sh <sddm theme> <grub script>` (either may be
 /// empty). The commands travel as an argument, not as a file a user process could swap. The
@@ -85,8 +150,23 @@ mod tests {
     }
 
     #[test]
-    fn root_script_is_valid_sh() {
-        let out = std::process::Command::new("sh").args(["-n", "-c", ROOT_SCRIPT]).output().unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    fn root_scripts_are_valid_sh() {
+        for script in [ROOT_SCRIPT, LOGIN_SCRIPT, SETUP_SCRIPT] {
+            let out = std::process::Command::new("sh").args(["-n", "-c", script]).output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        }
+        assert!(LOGIN_POLICY_XML.contains(LOGIN_HELPER) && SETUP_SCRIPT.contains(LOGIN_HELPER));
+        assert!(SETUP_SCRIPT.contains(LOGIN_POLICY));
+    }
+
+    /// The helper refuses anything but one plain theme name, before it touches a file.
+    #[test]
+    fn login_helper_refuses_odd_names() {
+        for bad in ["", "../etc", ".hidden", "a b", "x;rm", "a/b"] {
+            let out = std::process::Command::new("sh").args(["-c", LOGIN_SCRIPT, "kigae-login", bad]).output().unwrap();
+            assert_eq!(out.status.code(), Some(2), "{bad:?}");
+        }
+        let out = std::process::Command::new("sh").args(["-c", LOGIN_SCRIPT, "kigae-login", "a", "b"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(2));
     }
 }
