@@ -4,6 +4,7 @@ pub mod capture;
 pub mod card;
 pub mod config;
 pub mod daynight;
+pub mod deep;
 pub mod discover;
 pub mod engine;
 pub mod install;

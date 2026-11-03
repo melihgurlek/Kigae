@@ -14,6 +14,7 @@ use kigae_core::sys::{Action, DryRun, FileState, RealSys, Sys, Traced};
 use kigae_core::card;
 use kigae_core::install;
 use kigae_core::capture;
+use kigae_core::deep as deep_switch;
 
 #[cfg(feature = "overlay")]
 mod overlay;
@@ -113,7 +114,15 @@ enum Command {
     /// Apply each rice in turn and take its preview screenshot
     Shoot { ids: Vec<String> },
     /// Switch login screen and GRUB (one pkexec prompt)
-    Deep { id: String },
+    Deep {
+        id: String,
+        /// Print what would change, change nothing
+        #[arg(long)]
+        dry_run: bool,
+        /// Run the rice's GRUB script even if GRUB already shows its theme
+        #[arg(long)]
+        grub: bool,
+    },
     /// Run the D-Bus service and overlay
     Daemon,
     /// Ask the daemon to show the overlay (bound to Meta+Shift+T)
@@ -205,7 +214,7 @@ fn main() -> ExitCode {
         #[cfg(not(feature = "overlay"))]
         Command::Daemon | Command::Overlay | Command::Setup { .. } => Err("built without the overlay feature".into()),
         Command::Shoot { ids } => shoot(&ids),
-        Command::Deep { .. } => Err("not built yet (phase 4 in PLAN.md)".into()),
+        Command::Deep { id, dry_run, grub } => deep(&id, dry_run, grub),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -285,6 +294,7 @@ fn apply(id: &str, dry_run: bool, mood: Option<Mood>, from: Option<&str>, force:
     for w in &out.warnings {
         eprintln!("kigae: warning: {w}");
     }
+    login_hint(to);
     Ok(())
 }
 
@@ -553,4 +563,102 @@ fn capture_cmd(info: capture::Info, dry_run: bool, force: bool) -> Res {
         println!("  note: {n}");
     }
     Ok(())
+}
+
+
+/// After a switch: say so when the login screen still belongs to another rice (the deep switch
+/// needs root, so it never runs on its own).
+fn login_hint(r: &Rice) {
+    if let Some(t) = &r.manifest.deep.sddm {
+        let now = deep_switch::login_theme();
+        if now.as_deref() != Some(t.as_str()) {
+            eprintln!("kigae: the login screen is still {}; `kigae deep {}` switches it (asks for your password)",
+                      now.as_deref().unwrap_or("the default"), r.id());
+        }
+    }
+}
+
+/// SDDM and GRUB for a rice, behind one pkexec prompt (SPEC.md §11).
+fn deep(id: &str, dry_run: bool, grub_again: bool) -> Res {
+    let c = ctx()?;
+    let r = c.rice(id)?;
+    let d = &r.manifest.deep;
+    if d.sddm.is_none() && d.grub.is_none() {
+        return Err(format!("{id} has no [deep] parts (login screen, GRUB)"));
+    }
+    let mut theme = String::new();
+    if let Some(t) = &d.sddm {
+        if !deep_switch::sddm_installed(t) {
+            return Err(format!("SDDM theme {t:?} is not installed in {}: install it with the rice's own installer first", deep_switch::SDDM_THEMES));
+        }
+        if deep_switch::login_theme().as_deref() == Some(t.as_str()) {
+            println!("login: already {t}");
+        } else {
+            theme = t.clone();
+        }
+    }
+    let mut grub = String::new();
+    let mut scratch = None;
+    if let Some(g) = &d.grub {
+        if deep_switch::grub_shows(id) && !grub_again {
+            println!("grub: already {id} (--grub runs its script again)");
+        } else {
+            let (script, dir) = grub_script(r, g)?;
+            grub = script.to_string_lossy().into_owned();
+            scratch = dir;
+        }
+    }
+    if theme.is_empty() && grub.is_empty() {
+        return Ok(());
+    }
+    if dry_run {
+        if !theme.is_empty() {
+            println!("would set the login to {theme} ({} [Theme] Current)", deep_switch::SDDM_CONF);
+        }
+        if !grub.is_empty() {
+            println!("would run {grub} as root");
+        }
+        if let Some(dir) = scratch {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        return Ok(());
+    }
+    let status = std::process::Command::new("pkexec")
+        .args(["/bin/sh", "-c", deep_switch::ROOT_SCRIPT, "sh", &theme, &grub])
+        .status()
+        .map_err(|e| format!("pkexec: {e}"));
+    if let Some(dir) = scratch {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    match status?.code() {
+        Some(0) => Ok(()),
+        Some(126) | Some(127) => Err("not authorised (pkexec was cancelled or denied)".into()),
+        c => Err(format!("the root part failed (exit {})", c.map_or("?".into(), |c| c.to_string()))),
+    }
+}
+
+/// The rice's GRUB script on disk: next to a local manifest, or its folder taken out of the
+/// rice's branch (git archive) into the runtime dir, since nothing is ever checked out.
+fn grub_script(r: &Rice, path: &str) -> Res<(PathBuf, Option<PathBuf>)> {
+    if let (Some(rest), Some(dir)) = (path.strip_prefix("./"), &r.local_dir) {
+        let p = dir.join(rest);
+        return if p.is_file() { Ok((p, None)) } else { Err(format!("{}: no such GRUB script", p.display())) };
+    }
+    let branch = r.branch.as_ref().ok_or_else(|| format!("{}: GRUB script {path:?} needs a branch", r.id()))?;
+    let folder = std::path::Path::new(path).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    let run = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let out = run.join(format!("kigae-deep-{}", r.id()));
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let tar = std::process::Command::new("sh")
+        .args(["-c", r#"git -C "$1" archive "$2" -- "$3" | tar -x -C "$4""#, "sh"])
+        .arg(&r.repo).arg(branch).arg(if folder.is_empty() { "." } else { &folder }).arg(&out)
+        .status()
+        .map_err(|e| e.to_string())?;
+    let script = out.join(path);
+    if !tar.success() || !script.is_file() {
+        let _ = std::fs::remove_dir_all(&out);
+        return Err(format!("couldn't take {path} out of {branch}"));
+    }
+    Ok((script, Some(out)))
 }
