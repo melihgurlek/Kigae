@@ -92,9 +92,16 @@ rest is plasmashell: the theme tools 1.5–2.3 s, the panel rebuild ~1.2 s, the 
 side by side (slower: they queue on plasmashell) and fewer overlay redraws during the switch (no
 change). Left untried: removing the panels before the theme tools (maybe −1 s, changes undo order).
 
-## Phase 4: deep switch
+## Phase 4: deep switch (done 2026-11-03)
 
-- `kigae deep <id>`: SDDM + GRUB through the existing scripts, one `pkexec`
+- `kigae deep <id> [--dry-run] [--grub]`: one `pkexec /bin/sh -c` with the commands as an argument
+  (no script file a user process could swap). SDDM: the theme must already be installed (each
+  rice's own installer does that); only `[Theme] Current` in /etc/sddm.conf changes, the first time
+  with a copy kept as sddm.conf.pre-kigae. GRUB: the rice's script, taken out of its branch with
+  `git archive` (or next to a local manifest); skipped when /etc/default/grub already points at
+  `/themes/<id>/`, unless `--grub`. A rice without a part leaves it as it is.
+- Never on the hotkey or the sun switch. `kigae apply` says when the login screen still belongs
+  to another rice.
 
 ## Phase 5 (optional): moods
 
