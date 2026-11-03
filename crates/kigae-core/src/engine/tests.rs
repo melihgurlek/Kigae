@@ -316,3 +316,31 @@ fn kconfig_values_naming_home_files_are_spelled_out() {
     assert_eq!(paths.expand_value("org.kde.image"), "org.kde.image");
     assert_eq!(paths.expand_value("file:///etc/x"), "file:///etc/x");
 }
+
+#[test]
+fn the_login_follows_a_switch_once_set_up_and_undo_puts_it_back() {
+    let (ukiyo, _) = rices();
+    let mut og = Manifest::parse(&format!("{OG}\n[deep]\nsddm = \"astronaut\"\n")).unwrap();
+    // not set up: the switch leaves the login alone (the CLI hints at `kigae deep`)
+    let mut sys = ukiyo_desktop();
+    sys.login = Some("ukiyo".into());
+    apply(&mut sys, &paths(), Some(&ukiyo), target(&og, "OG-LAYOUT"), opts()).unwrap();
+    assert_eq!(sys.login.as_deref(), Some("ukiyo"));
+
+    // set up: no prompt, the login becomes og's, and undo makes it ukiyo's again
+    let mut sys = ukiyo_desktop();
+    sys.login = Some("ukiyo".into());
+    sys.present = vec![deep::LOGIN_HELPER.into(), deep::LOGIN_POLICY.into()];
+    let mut out = apply(&mut sys, &paths(), Some(&ukiyo), target(&og, "OG-LAYOUT"), opts()).unwrap();
+    assert_eq!(sys.login.as_deref(), Some("astronaut"));
+    assert!(sys.log().contains(&format!("pkexec {} astronaut", deep::LOGIN_HELPER)));
+    let errors = undo(&mut sys, &paths(), &mut out.journal).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(sys.login.as_deref(), Some("ukiyo"));
+
+    // a mood change never touches it
+    let n = sys.actions.len();
+    sys.login = Some("other".into());
+    apply(&mut sys, &paths(), Some(&og), target(&og, "OG-LAYOUT"), Opts { only_mood: true, ..opts() }).unwrap();
+    assert!(!sys.log()[n..].iter().any(|a| a.contains("kigae-login")));
+}

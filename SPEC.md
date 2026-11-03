@@ -250,7 +250,7 @@ kigae setup [--remove]           start the daemon at login, bind Meta+Shift+T
 - Never edit appletsrc while plasmashell is running. Panels change only through the scripting API.
 - Never copy over shared config files (`kdeglobals`, `kwinrc`, `plasmarc`, and so on). Those are changed key by key, and every key is journaled first.
 - Every switch is journaled before it starts. `kigae undo` puts the previous state back exactly.
-- Anything that needs root is limited to `kigae deep` and never happens on the hotkey.
+- Anything that needs root is limited to `kigae deep`, with one exception the user opts into once: after `kigae setup-login`, a switch points SDDM at the rice's installed theme through `/usr/local/libexec/kigae-login`, a root helper that accepts one theme name and nothing else (polkit lets the active session run it without a password). GRUB never runs on a switch.
 
 ## 12. Known limits
 

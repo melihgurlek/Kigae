@@ -35,7 +35,8 @@ Every part of a rice is a file in a folder of its own: a colour scheme in `color
 | Neovim | `vim.g.rice` read from a state file at startup |
 | Kate/KWrite, Konsole | `kwriteconfig6` the theme/profile; new windows only |
 | Splash | `ksplashrc`, shown at the next login (it can't show any earlier) |
-| Login screen, GRUB | need root: separate **deep switch** (`pkexec`), never on the hotkey |
+| Login screen | follows every switch once `kigae setup-login` has installed its root helper (one password, ever); otherwise `kigae deep` |
+| GRUB | needs root and rewrites grub.cfg: only on `kigae deep` |
 
 Each rice also turns its own background services on or off. For example, `ukiyo-sky.timer` runs only while Ukiyo is active; otherwise it would put Ukiyo wallpapers on top of another rice.
 

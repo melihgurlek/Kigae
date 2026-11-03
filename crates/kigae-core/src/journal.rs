@@ -26,6 +26,8 @@ pub enum Entry {
     Wallpaper { old: Option<String> },
     File { path: PathBuf, old: FileState },
     Unit { unit: String, old: UnitState },
+    /// The SDDM theme before the switch pointed the login at the rice's.
+    Login { old: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
