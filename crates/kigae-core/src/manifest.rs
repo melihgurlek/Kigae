@@ -95,6 +95,15 @@ impl MoodKind {
             MoodKind::Dark => "dark",
         }
     }
+
+    /// `"light"` or `"dark"`, as [`MoodKind::name`] writes it.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "light" => Some(MoodKind::Light),
+            "dark" => Some(MoodKind::Dark),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]

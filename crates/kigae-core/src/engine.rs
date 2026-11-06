@@ -324,8 +324,9 @@ fn kconfig<S: Sys>(
     Ok(())
 }
 
-#[derive(Clone, Copy)]
-enum Part {
+/// The Plasma parts switched with Plasma's own tools.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Part {
     Colors,
     Style,
     Icons,
@@ -333,14 +334,52 @@ enum Part {
 }
 
 impl Part {
-    /// Where Plasma keeps the current value, and the tool that changes it live.
-    fn spec(self) -> (&'static str, &'static str, &'static str, &'static str) {
+    pub const ALL: [Part; 4] = [Part::Colors, Part::Style, Part::Icons, Part::Cursor];
+
+    /// Where Plasma keeps the current value: (file, group, key).
+    pub fn config(self) -> (&'static str, &'static str, &'static str) {
         match self {
-            Part::Colors => ("kdeglobals", "General", "ColorScheme", "plasma-apply-colorscheme"),
-            Part::Style => ("plasmarc", "Theme", "name", "plasma-apply-desktoptheme"),
-            Part::Icons => ("kdeglobals", "Icons", "Theme", "/usr/libexec/plasma-changeicons"),
-            Part::Cursor => ("kcminputrc", "Mouse", "cursorTheme", "plasma-apply-cursortheme"),
+            Part::Colors => ("kdeglobals", "General", "ColorScheme"),
+            Part::Style => ("plasmarc", "Theme", "name"),
+            Part::Icons => ("kdeglobals", "Icons", "Theme"),
+            Part::Cursor => ("kcminputrc", "Mouse", "cursorTheme"),
         }
+    }
+
+    /// The tool that changes it live.
+    pub fn tool(self) -> &'static str {
+        match self {
+            Part::Colors => "plasma-apply-colorscheme",
+            Part::Style => "plasma-apply-desktoptheme",
+            Part::Icons => "/usr/libexec/plasma-changeicons",
+            Part::Cursor => "plasma-apply-cursortheme",
+        }
+    }
+
+    /// Its key under `[plasma]`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Part::Colors => "colors",
+            Part::Style => "style",
+            Part::Icons => "icons",
+            Part::Cursor => "cursor",
+        }
+    }
+
+    /// What a manifest's `[plasma]` sets it to.
+    pub fn of(self, p: &crate::manifest::Plasma) -> &Option<String> {
+        match self {
+            Part::Colors => &p.colors,
+            Part::Style => &p.style,
+            Part::Icons => &p.icons,
+            Part::Cursor => &p.cursor,
+        }
+    }
+
+    /// The value on screen now.
+    pub fn read<S: Sys>(self, sys: &mut S) -> Result<Option<String>, SysError> {
+        let (file, group, key) = self.config();
+        sys.kread(file, &[group.into()], key)
     }
 
     fn entry(self, old: Option<String>) -> Entry {
@@ -355,13 +394,12 @@ impl Part {
 
 fn plasma_part<S: Sys>(r: &mut Run<'_, S>, want: Option<&str>, part: Part) -> Result<(), ApplyError> {
     let Some(want) = want else { return Ok(()) };
-    let (file, group, key, tool) = part.spec();
-    let old = r.sys.kread(file, &[group.into()], key)?;
+    let old = part.read(r.sys)?;
     if old.as_deref() == Some(want) {
         return Ok(());
     }
     r.record(part.entry(old))?;
-    r.sys.act(&Action::Exec(vec![tool.into(), want.into()]))?;
+    r.sys.act(&Action::Exec(vec![part.tool().into(), want.into()]))?;
     Ok(())
 }
 
@@ -541,7 +579,7 @@ pub fn undo_entries<S: Sys>(sys: &mut S, paths: &Paths, entries: &[Entry]) -> Ve
 }
 
 fn tool(part: Part, old: &Option<String>) -> Vec<Action> {
-    old.iter().map(|v| Action::Exec(vec![part.spec().3.into(), v.clone()])).collect()
+    old.iter().map(|v| Action::Exec(vec![part.tool().into(), v.clone()])).collect()
 }
 
 /// Undo a finished switch and mark its journal undone.
@@ -553,8 +591,8 @@ pub fn undo<S: Sys>(sys: &mut S, paths: &Paths, journal: &mut Journal) -> Result
 
 /// Which rice is on screen, when `current` is missing: match the Plasma style, then the colours.
 pub fn infer_current<'a, S: Sys>(sys: &mut S, rices: &'a [Manifest]) -> Option<&'a Manifest> {
-    let style = sys.kread("plasmarc", &["Theme".into()], "name").ok().flatten();
-    let colors = sys.kread("kdeglobals", &["General".into()], "ColorScheme").ok().flatten();
+    let style = Part::Style.read(sys).ok().flatten();
+    let colors = Part::Colors.read(sys).ok().flatten();
     let looks = |m: &Manifest| {
         let mut v = vec![m.look(None)];
         if m.daynight.is_some() {

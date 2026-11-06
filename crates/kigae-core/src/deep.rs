@@ -18,7 +18,9 @@ pub const LOGIN_HELPER: &str = "/usr/local/libexec/kigae-login";
 /// The polkit action that lets the active session run it without a password.
 pub const LOGIN_POLICY: &str = "/usr/share/polkit-1/actions/dev.kigae.login.policy";
 
-/// The helper itself: the SDDM half of ROOT_SCRIPT, as a file root owns.
+/// The helper: point SDDM at an installed theme. Installed as a file root owns by `kigae
+/// setup-login`, and run inline by ROOT_SCRIPT for `kigae deep`. The first change keeps a copy
+/// of sddm.conf as sddm.conf.pre-kigae.
 pub const LOGIN_SCRIPT: &str = r#"#!/bin/sh
 # kigae-login: point SDDM at an installed login theme (installed by `kigae setup-login`).
 # Runs as root through pkexec without a password, so it takes one theme name and nothing else.
@@ -74,21 +76,13 @@ pub fn login_command(theme: &str) -> Vec<String> {
     vec!["pkexec".into(), LOGIN_HELPER.into(), theme.into()]
 }
 
-/// What root runs, as `pkexec /bin/sh -c ROOT_SCRIPT sh <sddm theme> <grub script>` (either may be
-/// empty). The commands travel as an argument, not as a file a user process could swap. The
-/// first change keeps a copy of sddm.conf as sddm.conf.pre-kigae.
+/// What root runs, as `pkexec /bin/sh -c ROOT_SCRIPT sh LOGIN_SCRIPT <sddm theme> <grub script>`
+/// (either may be empty). The commands travel as arguments, not as a file a user process could
+/// swap, and the login half is LOGIN_SCRIPT itself, so the theme checks live in one place.
 pub const ROOT_SCRIPT: &str = r#"set -eu
-theme=$1 grub=$2 conf=/etc/sddm.conf
+login=$1 theme=$2 grub=$3
 if [ -n "$theme" ]; then
-  case $theme in *[!A-Za-z0-9._-]*|.*) echo "bad theme name: $theme" >&2; exit 2;; esac
-  [ -f "/usr/share/sddm/themes/$theme/metadata.desktop" ] || { echo "SDDM theme $theme is not installed" >&2; exit 1; }
-  [ -e "$conf" ] || : > "$conf"
-  [ -e "$conf.pre-kigae" ] || cp -a "$conf" "$conf.pre-kigae"
-  if grep -q '^[[:space:]]*Current=' "$conf"; then
-    sed -i "s/^\([[:space:]]*\)Current=.*/\1Current=$theme/" "$conf"
-  else
-    printf '\n[Theme]\nCurrent=%s\n' "$theme" >> "$conf"
-  fi
+  sh -c "$login" kigae-login "$theme"
   echo "login: $theme"
 fi
 if [ -n "$grub" ]; then
@@ -98,18 +92,7 @@ fi
 
 /// `[Theme] Current` from an sddm.conf-style text, if it sets one.
 pub fn current_in(text: &str) -> Option<String> {
-    let mut group = String::new();
-    let mut found = None;
-    for line in text.lines().map(str::trim) {
-        if let Some(g) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            group = g.to_string();
-        } else if group == "Theme"
-            && let Some(v) = line.strip_prefix("Current=")
-        {
-            found = Some(v.trim().to_string());
-        }
-    }
-    found
+    crate::kconfig::groups(text).remove("Theme")?.remove("Current")
 }
 
 /// The login theme SDDM will use: /etc/sddm.conf wins over /etc/sddm.conf.d, where the last
@@ -168,5 +151,10 @@ mod tests {
         }
         let out = std::process::Command::new("sh").args(["-c", LOGIN_SCRIPT, "kigae-login", "a", "b"]).output().unwrap();
         assert_eq!(out.status.code(), Some(2));
+        // `kigae deep` runs the same checks
+        for bad in ["../etc", ".hidden", "x;rm"] {
+            let out = std::process::Command::new("sh").args(["-c", ROOT_SCRIPT, "sh", LOGIN_SCRIPT, bad, ""]).output().unwrap();
+            assert_eq!(out.status.code(), Some(2), "{bad:?}");
+        }
     }
 }

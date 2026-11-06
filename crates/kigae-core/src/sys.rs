@@ -510,7 +510,7 @@ impl RealSys {
 
 // ───────────────────────────── fake ─────────────────────────────
 
-/// An in-memory desktop for tests and `--dry-run`: reads come from maps, actions are recorded
+/// An in-memory desktop for tests: reads come from maps, actions are recorded
 /// and also applied to the maps, so later reads (and undo) see them.
 #[derive(Debug, Default, Clone)]
 pub struct FakeSys {
@@ -613,16 +613,14 @@ impl Sys for FakeSys {
                 };
             }
             Action::Exec(argv) => {
-                let set = |s: &mut Self, f: &str, g: &str, k: &str| {
-                    if let Some(v) = argv.get(1) {
-                        s.set_kconfig(f, g, k, v);
-                    }
-                };
-                match argv.first().map(String::as_str) {
-                    Some("plasma-apply-colorscheme") => set(self, "kdeglobals", "General", "ColorScheme"),
-                    Some("plasma-apply-desktoptheme") => set(self, "plasmarc", "Theme", "name"),
-                    Some("/usr/libexec/plasma-changeicons") => set(self, "kdeglobals", "Icons", "Theme"),
-                    Some("plasma-apply-cursortheme") => set(self, "kcminputrc", "Mouse", "cursorTheme"),
+                let tool = argv.first().map(String::as_str);
+                if let Some(part) = crate::engine::Part::ALL.into_iter().find(|p| Some(p.tool()) == tool)
+                    && let Some(v) = argv.get(1)
+                {
+                    let (f, g, k) = part.config();
+                    self.set_kconfig(f, g, k, v);
+                }
+                match tool {
                     Some("plasma-apply-wallpaperimage") => {
                         self.wallpaper = argv.get(1).map(|p| format!("file://{p}"));
                     }
@@ -717,31 +715,6 @@ impl<S: Sys> Sys for DryRun<S> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn hooks_report_failures_and_time_out() {
-        let t = Duration::from_secs(5);
-        assert!(run_shell("true", t).is_ok());
-        let err = run_shell("echo nope >&2; exit 3", t).unwrap_err().to_string();
-        assert!(err.contains("nope"), "{err}");
-        let start = Instant::now();
-        let err = run_shell("sleep 5", Duration::from_millis(100)).unwrap_err().to_string();
-        assert!(err.contains("timed out"), "{err}");
-        assert!(start.elapsed() < Duration::from_secs(3));
-    }
-
-    #[test]
-    fn a_backgrounded_process_does_not_hold_the_hook() {
-        let start = Instant::now();
-        run_shell("sleep 3 &", Duration::from_secs(10)).unwrap();
-        assert!(start.elapsed() < Duration::from_secs(2));
-    }
-}
-
 // ───────────────────────────── timing ─────────────────────────────
 
 /// Passes everything through and prints how long each read and action took (`KIGAE_TRACE=1`).
@@ -798,5 +771,30 @@ impl<S: Sys> Sys for Traced<S> {
     }
     fn act(&mut self, action: &Action) -> Result<String> {
         self.time(|| action.to_string(), |s| s.act(action))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn hooks_report_failures_and_time_out() {
+        let t = Duration::from_secs(5);
+        assert!(run_shell("true", t).is_ok());
+        let err = run_shell("echo nope >&2; exit 3", t).unwrap_err().to_string();
+        assert!(err.contains("nope"), "{err}");
+        let start = Instant::now();
+        let err = run_shell("sleep 5", Duration::from_millis(100)).unwrap_err().to_string();
+        assert!(err.contains("timed out"), "{err}");
+        assert!(start.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn a_backgrounded_process_does_not_hold_the_hook() {
+        let start = Instant::now();
+        run_shell("sleep 3 &", Duration::from_secs(10)).unwrap();
+        assert!(start.elapsed() < Duration::from_secs(2));
     }
 }
