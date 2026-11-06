@@ -117,11 +117,7 @@ impl qobject::Kigae {
 
     fn apply(self: Pin<&mut Self>, id: &QString, mood: &QString) {
         let id = String::from(id);
-        let mood = match String::from(mood).as_str() {
-            "light" => Some(MoodKind::Light),
-            "dark" => Some(MoodKind::Dark),
-            _ => None,
-        };
+        let mood = MoodKind::parse(&String::from(mood));
         self.run(move || {
             let out = crate::switch(&id, mood)?;
             Ok(out.warnings.join("\n"))
@@ -130,15 +126,7 @@ impl qobject::Kigae {
 
     fn undo(self: Pin<&mut Self>) {
         self.run(|| {
-            let paths = engine::Paths::from_env().ok_or("HOME is not set")?;
-            let journals = Journal::list(&paths.undo_dir()).map_err(|e| e.to_string())?;
-            let mut j = journals
-                .into_iter()
-                .rev()
-                .find(|j| matches!(j.status, Status::Done | Status::InProgress) && !j.entries.is_empty())
-                .ok_or("nothing to undo")?;
-            let _lock = crate::lock()?;
-            let errors = engine::undo(&mut RealSys::new(), &paths, &mut j).map_err(|e| e.to_string())?;
+            let (_, errors) = crate::undo_switch(None)?;
             if errors.is_empty() { Ok(String::new()) } else { Err(errors.join("\n")) }
         });
     }

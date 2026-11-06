@@ -265,7 +265,9 @@ fn apply(id: &str, dry_run: bool, mood: Option<Mood>, from: Option<&str>, force:
         Some(f) => Some(c.rice(f)?),
         None => c.current(&mut real).map(|(r, _)| r),
     };
-    let problems = engine::doctor(&mut real, &c.paths, &to.manifest);
+    // check what will be applied: base.toml's parts too
+    let to_m = c.effective(&to.manifest);
+    let problems = engine::doctor(&mut real, &c.paths, &to_m);
     if !problems.is_empty() {
         let list = problems.join("\n  ");
         if !force {
@@ -275,35 +277,47 @@ fn apply(id: &str, dry_run: bool, mood: Option<Mood>, from: Option<&str>, force:
     }
     let layout_js = to.layout_js().map_err(|e| e.to_string())?;
     let from_m = from.map(|r| c.effective(&r.manifest));
-    let to_m = c.effective(&to.manifest);
-    let opts = Opts { mood: mood.map(Into::into), unset: c.policy, no_journal: dry_run, ..Opts::default() };
+    let opts = Opts { mood: mood.map(Into::into), unset: c.policy, ..Opts::default() };
     let target = Target { manifest: &to_m, layout_js };
-    let from_label = from.map(Rice::id).unwrap_or("?");
+    let label = format!("{} → {id}", from.map(Rice::id).unwrap_or("?"));
     if dry_run {
-        let mut sys = DryRun::new(real);
-        let out = engine::apply(&mut sys, &c.paths, from_m.as_ref(), target, opts).map_err(|e| e.to_string())?;
-        println!("{from_label} → {id}{}:", mood_label(out.mood));
-        for a in &sys.actions {
-            println!("  {a}");
-        }
-        if sys.actions.is_empty() {
-            println!("  (nothing to change)");
-        }
-        return Ok(());
+        return print_plan(real, &c.paths, from_m.as_ref(), target, opts, &label);
     }
+    report(&label, &run_switch(real, &c.paths, from_m.as_ref(), target, opts)?);
+    login_hint(to);
+    Ok(())
+}
+
+/// Switch for real: one at a time, each step timed with `KIGAE_TRACE=1`.
+fn run_switch(mut real: RealSys, paths: &Paths, from: Option<&Manifest>, to: Target<'_>, opts: Opts) -> Res<engine::Outcome> {
     let _lock = lock()?;
-    let out = if std::env::var_os("KIGAE_TRACE").is_some() {
-        engine::apply(&mut Traced::new(real), &c.paths, from_m.as_ref(), target, opts)
+    if std::env::var_os("KIGAE_TRACE").is_some() {
+        engine::apply(&mut Traced::new(real), paths, from, to, opts)
     } else {
-        engine::apply(&mut real, &c.paths, from_m.as_ref(), target, opts)
+        engine::apply(&mut real, paths, from, to, opts)
     }
-    .map_err(|e| e.to_string())?;
-    println!("{from_label} → {id}{}: {} changes", mood_label(out.mood), out.journal.entries.len());
+    .map_err(|e| e.to_string())
+}
+
+/// `--dry-run`: print what the switch would change, change nothing.
+fn print_plan(real: RealSys, paths: &Paths, from: Option<&Manifest>, to: Target<'_>, opts: Opts, label: &str) -> Res {
+    let mut sys = DryRun::new(real);
+    let out = engine::apply(&mut sys, paths, from, to, Opts { no_journal: true, ..opts }).map_err(|e| e.to_string())?;
+    println!("{label}{}:", mood_label(out.mood));
+    for a in &sys.actions {
+        println!("  {a}");
+    }
+    if sys.actions.is_empty() {
+        println!("  (nothing to change)");
+    }
+    Ok(())
+}
+
+fn report(label: &str, out: &engine::Outcome) {
+    println!("{label}{}: {} changes", mood_label(out.mood), out.journal.entries.len());
     for w in &out.warnings {
         eprintln!("kigae: warning: {w}");
     }
-    login_hint(to);
-    Ok(())
 }
 
 /// Switch to `id` for the overlay and `shoot`: no dry run, no `--force`, the rice on screen as
@@ -312,24 +326,17 @@ fn switch(id: &str, mood: Option<MoodKind>) -> Res<engine::Outcome> {
     let c = ctx()?;
     let mut real = RealSys::new();
     let to = c.rice(id)?;
-    let problems = engine::doctor(&mut real, &c.paths, &c.effective(&to.manifest));
+    let to_m = c.effective(&to.manifest);
+    let problems = engine::doctor(&mut real, &c.paths, &to_m);
     if !problems.is_empty() {
         return Err(format!("{} isn't ready: {}", to.manifest.name, problems.join("; ")));
     }
     let from = c.current(&mut real).map(|(r, _)| r);
     let only_mood = from.is_some_and(|r| r.id() == to.id());
     let from_m = from.map(|r| c.effective(&r.manifest));
-    let to_m = c.effective(&to.manifest);
     let layout_js = if only_mood { None } else { to.layout_js().map_err(|e| e.to_string())? };
     let opts = Opts { mood, only_mood, unset: c.policy, ..Opts::default() };
-    let _lock = lock()?;
-    let target = Target { manifest: &to_m, layout_js };
-    if std::env::var_os("KIGAE_TRACE").is_some() {
-        engine::apply(&mut Traced::new(real), &c.paths, from_m.as_ref(), target, opts)
-    } else {
-        engine::apply(&mut real, &c.paths, from_m.as_ref(), target, opts)
-    }
-    .map_err(|e| e.to_string())
+    run_switch(real, &c.paths, from_m.as_ref(), Target { manifest: &to_m, layout_js }, opts)
 }
 
 /// The sun just rose or set: put up the active rice's look for now, if it has two (SPEC.md §6).
@@ -343,9 +350,7 @@ fn follow_sun() -> Res<Option<String>> {
     }
     let m = c.effective(&rice.manifest);
     let opts = Opts { only_mood: true, unset: c.policy, ..Opts::default() };
-    let _lock = lock()?;
-    let out = engine::apply(&mut real, &c.paths, Some(&m), Target { manifest: &m, layout_js: None }, opts)
-        .map_err(|e| e.to_string())?;
+    let out = run_switch(real, &c.paths, Some(&m), Target { manifest: &m, layout_js: None }, opts)?;
     Ok(Some(format!("{}{}", rice.id(), mood_label(out.mood))))
 }
 
@@ -357,7 +362,7 @@ fn shoot(ids: &[String]) -> Res {
     let (start, _) = c.current(&mut real).ok_or("can't tell which rice is on screen; apply one first")?;
     let start_id = start.id().to_string();
     let last = Journal::list(&c.paths.undo_dir()).ok().and_then(|j| j.into_iter().last());
-    let start_mood = last.filter(|j| j.to == start_id).and_then(|j| j.mood).map(|m| mood_kind(&m));
+    let start_mood = last.filter(|j| j.to == start_id).and_then(|j| j.mood).and_then(|m| MoodKind::parse(&m));
     let mut rices: Vec<&Rice> =
         if ids.is_empty() { c.rices.iter().collect() } else { ids.iter().map(|i| c.rice(i)).collect::<Res<_>>()? };
     // the rice on screen first, and last of its looks the one it's wearing: fewer switches
@@ -417,10 +422,6 @@ fn take_shot(sys: &mut RealSys, path: &std::path::Path) -> Res {
     }
 }
 
-fn mood_kind(m: &str) -> MoodKind {
-    if m == "light" { MoodKind::Light } else { MoodKind::Dark }
-}
-
 fn mood_label(m: Option<MoodKind>) -> String {
     m.map(|m| format!(" ({})", m.name())).unwrap_or_default()
 }
@@ -434,42 +435,19 @@ fn mood_cmd(mood: Option<Mood>, dry_run: bool) -> Res {
         return Ok(());
     }
     let m = c.effective(&rice.manifest);
-    let opts = Opts { mood: mood.map(Into::into), only_mood: true, unset: c.policy, no_journal: dry_run };
+    let opts = Opts { mood: mood.map(Into::into), only_mood: true, unset: c.policy, ..Opts::default() };
     let target = Target { manifest: &m, layout_js: None };
     if dry_run {
-        let mut sys = DryRun::new(real);
-        let out = engine::apply(&mut sys, &c.paths, Some(&m), target, opts).map_err(|e| e.to_string())?;
-        println!("{}{}:", rice.id(), mood_label(out.mood));
-        for a in &sys.actions {
-            println!("  {a}");
-        }
-        return Ok(());
+        return print_plan(real, &c.paths, Some(&m), target, opts, rice.id());
     }
-    let _lock = lock()?;
-    let out = engine::apply(&mut real, &c.paths, Some(&m), target, opts).map_err(|e| e.to_string())?;
-    println!("{}{}: {} changes", rice.id(), mood_label(out.mood), out.journal.entries.len());
-    for w in &out.warnings {
-        eprintln!("kigae: warning: {w}");
-    }
+    report(rice.id(), &run_switch(real, &c.paths, Some(&m), target, opts)?);
     Ok(())
 }
 
-fn undo(list: bool, ts: Option<u64>) -> Res {
+/// Undo a remembered switch: the one at `ts`, else the last one that changed something.
+fn undo_switch(ts: Option<u64>) -> Res<(Journal, Vec<String>)> {
     let paths = Paths::from_env().ok_or("HOME is not set")?;
     let journals = Journal::list(&paths.undo_dir()).map_err(|e| e.to_string())?;
-    if list {
-        for j in &journals {
-            let status = match j.status {
-                Status::Done => "",
-                Status::InProgress => "  (interrupted)",
-                Status::RolledBack => "  (rolled back)",
-                Status::Undone => "  (undone)",
-            };
-            let from = j.from.as_deref().unwrap_or("?");
-            println!("{}  {from} → {}{}  {} changes{status}", j.ts, j.to, mood_label(j.mood.as_deref().map(|m| if m == "light" { MoodKind::Light } else { MoodKind::Dark })), j.entries.len());
-        }
-        return Ok(());
-    }
     let mut j = match ts {
         Some(ts) => journals.into_iter().find(|j| j.ts == ts).ok_or(format!("no switch at {ts}"))?,
         None => journals
@@ -480,6 +458,26 @@ fn undo(list: bool, ts: Option<u64>) -> Res {
     };
     let _lock = lock()?;
     let errors = engine::undo(&mut RealSys::new(), &paths, &mut j).map_err(|e| e.to_string())?;
+    Ok((j, errors))
+}
+
+fn undo(list: bool, ts: Option<u64>) -> Res {
+    if list {
+        let paths = Paths::from_env().ok_or("HOME is not set")?;
+        for j in &Journal::list(&paths.undo_dir()).map_err(|e| e.to_string())? {
+            let status = match j.status {
+                Status::Done => "",
+                Status::InProgress => "  (interrupted)",
+                Status::RolledBack => "  (rolled back)",
+                Status::Undone => "  (undone)",
+            };
+            let from = j.from.as_deref().unwrap_or("?");
+            let mood = mood_label(j.mood.as_deref().and_then(MoodKind::parse));
+            println!("{}  {from} → {}{mood}  {} changes{status}", j.ts, j.to, j.entries.len());
+        }
+        return Ok(());
+    }
+    let (j, errors) = undo_switch(ts)?;
     println!("undid {} → {} ({} changes)", j.from.as_deref().unwrap_or("?"), j.to, j.entries.len());
     if errors.is_empty() {
         Ok(())
@@ -658,7 +656,7 @@ fn deep(id: &str, dry_run: bool, grub_again: bool) -> Res {
         return Ok(());
     }
     let status = std::process::Command::new("pkexec")
-        .args(["/bin/sh", "-c", deep_switch::ROOT_SCRIPT, "sh", &theme, &grub])
+        .args(["/bin/sh", "-c", deep_switch::ROOT_SCRIPT, "sh", deep_switch::LOGIN_SCRIPT, &theme, &grub])
         .status()
         .map_err(|e| format!("pkexec: {e}"));
     if let Some(dir) = scratch {

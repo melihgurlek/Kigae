@@ -320,7 +320,7 @@ fn kconfig_values_naming_home_files_are_spelled_out() {
 #[test]
 fn the_login_follows_a_switch_once_set_up_and_undo_puts_it_back() {
     let (ukiyo, _) = rices();
-    let mut og = Manifest::parse(&format!("{OG}\n[deep]\nsddm = \"astronaut\"\n")).unwrap();
+    let og = Manifest::parse(&format!("{OG}\n[deep]\nsddm = \"astronaut\"\n")).unwrap();
     // not set up: the switch leaves the login alone (the CLI hints at `kigae deep`)
     let mut sys = ukiyo_desktop();
     sys.login = Some("ukiyo".into());

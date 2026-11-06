@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::engine::{Paths, file_url_path};
+use crate::engine::{Part, Paths, file_url_path};
 use crate::manifest::Manifest;
 use crate::sys::{FileState, Sys, SysError};
 
@@ -64,29 +64,6 @@ pub struct Captured {
     pub notes: Vec<String>,
 }
 
-/// Parse a KConfig file into `"Group/Sub" → key → value`, skipping localized and `$`-flagged keys.
-pub fn parse_kconfig(text: &str) -> BTreeMap<String, BTreeMap<String, String>> {
-    let mut out: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-    let mut group: Option<String> = None;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with('[') {
-            let parts: Vec<&str> = line.trim_start_matches('[').trim_end_matches(']').split("][").collect();
-            group = (!parts.iter().any(|p| p.starts_with('$'))).then(|| parts.join("/"));
-            continue;
-        }
-        let (Some(g), Some((k, v))) = (&group, line.split_once('=')) else { continue };
-        if k.contains('[') {
-            continue;
-        }
-        out.entry(g.clone()).or_default().insert(k.trim().to_string(), v.to_string());
-    }
-    out
-}
-
 fn kconfig_toml(v: &str) -> toml::Value {
     match v {
         "true" => toml::Value::Boolean(true),
@@ -118,10 +95,6 @@ fn json_to_toml(v: &serde_json::Value) -> Option<toml::Value> {
     })
 }
 
-fn kread(sys: &mut impl Sys, file: &str, group: &str, key: &str) -> Result<Option<String>, SysError> {
-    sys.kread(file, &[group.into()], key)
-}
-
 /// Read the rice on screen. Values equal to `base` are left out: they apply under every rice.
 pub fn capture<S: Sys>(sys: &mut S, paths: &Paths, info: &Info, base: Option<&Manifest>) -> Result<Captured, SysError> {
     let empty = Manifest::parse("schema = 1\nid = \"base\"\nname = \"base\"").expect("valid");
@@ -139,22 +112,11 @@ pub fn capture<S: Sys>(sys: &mut S, paths: &Paths, info: &Info, base: Option<&Ma
 
     // plasma parts
     let mut plasma = toml::Table::new();
-    for (key, file, group, k) in [
-        ("colors", "kdeglobals", "General", "ColorScheme"),
-        ("style", "plasmarc", "Theme", "name"),
-        ("icons", "kdeglobals", "Icons", "Theme"),
-        ("cursor", "kcminputrc", "Mouse", "cursorTheme"),
-    ] {
-        let in_base = match key {
-            "colors" => &base.plasma.colors,
-            "style" => &base.plasma.style,
-            "icons" => &base.plasma.icons,
-            _ => &base.plasma.cursor,
-        };
-        if let Some(v) = kread(sys, file, group, k)?
-            && in_base.as_ref() != Some(&v)
+    for part in Part::ALL {
+        if let Some(v) = part.read(sys)?
+            && part.of(&base.plasma).as_ref() != Some(&v)
         {
-            plasma.insert(key.into(), v.into());
+            plasma.insert(part.name().into(), v.into());
         }
     }
     plasma.insert("layout".into(), format!("./{}/layout.js", info.id).into());
@@ -177,7 +139,7 @@ pub fn capture<S: Sys>(sys: &mut S, paths: &Paths, info: &Info, base: Option<&Ma
                     FileState::Content(t) => t,
                     _ => String::new(),
                 };
-                files.entry(file).or_insert(parse_kconfig(&text))
+                files.entry(file).or_insert(crate::kconfig::groups(&text))
             }
         };
         let groups = parsed.iter().filter(|(g, _)| match group.strip_suffix('*') {
@@ -407,14 +369,5 @@ mod tests {
         assert!(js.contains(r#"kigae.desktop("org.ukiyo.clock", 1216, 368, 528, 240);"#), "{js}");
         let load = js.find("plasma.loadSerializedLayout(layout);").unwrap();
         assert!(js.find("d.applets = []").unwrap() < load && load < js.find("kigae.tray").unwrap());
-    }
-
-    #[test]
-    fn parses_kconfig_groups() {
-        let k = parse_kconfig("[A][B]\nx=1\ny[de]=2\n[$Version]\nz=3\n[C]\nw=a=b\n");
-        assert_eq!(k["A/B"]["x"], "1");
-        assert!(!k["A/B"].contains_key("y"));
-        assert!(!k.contains_key("$Version"));
-        assert_eq!(k["C"]["w"], "a=b");
     }
 }

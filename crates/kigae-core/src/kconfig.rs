@@ -3,7 +3,10 @@
 //! `kwriteconfig6` (SPEC.md §11). Anything this doesn't model exactly (immutable `[$i]` entries,
 //! `$e` expansion, deleted `[$d]` markers, unknown escapes) returns `None`, and the caller asks
 //! `kreadconfig6` instead.
+//!
+//! [`groups`] is the lenient reader for whole files (capture, colour schemes, sddm.conf).
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// Config directories, most important first: `$XDG_CONFIG_HOME`, then `$XDG_CONFIG_DIRS`.
@@ -41,6 +44,32 @@ pub fn read(dirs: &[PathBuf], file: &str, groups: &[String], key: &str) -> Optio
         }
     }
     Some(None)
+}
+
+/// Every plain entry of a file as `"Group/Sub" → key → value`, the last one winning. Lenient
+/// where [`read`] is strict: `$`-flagged groups, translations (`key[de]`), flagged keys
+/// (`key[$e]`) and values it can't unescape are skipped.
+pub fn groups(text: &str) -> BTreeMap<String, BTreeMap<String, String>> {
+    let mut out: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    let mut group: Option<String> = None;
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            group = header(line).map(|g| g.join("/"));
+            continue;
+        }
+        let (Some(g), Some((k, v))) = (&group, line.split_once('=')) else { continue };
+        let k = k.trim();
+        if k.contains('[') {
+            continue;
+        }
+        if let Some(v) = unescape(v.trim()) {
+            out.entry(g.clone()).or_default().insert(k.to_string(), v);
+        }
+    }
+    out
 }
 
 /// The key's value in one file: `Some(Some(v))`, `Some(None)` if absent, `None` if unsure.
@@ -213,5 +242,16 @@ mod tests {
             }
         }
         assert!(checked > 50, "only {checked} keys checked");
+    }
+
+    #[test]
+    fn groups_skips_what_it_cant_model() {
+        let k = groups("[A][B]\nx=1\ny[de]=2\n[$Version]\nz=3\n[C]\nw=a=b\nv=a\\sb\nbad=\\q\n");
+        assert_eq!(k["A/B"]["x"], "1");
+        assert!(!k["A/B"].contains_key("y"));
+        assert!(!k.contains_key("$Version"));
+        assert_eq!(k["C"]["w"], "a=b");
+        assert_eq!(k["C"]["v"], "a b");
+        assert!(!k["C"].contains_key("bad"));
     }
 }

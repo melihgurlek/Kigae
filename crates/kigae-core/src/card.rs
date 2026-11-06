@@ -1,7 +1,6 @@
 //! What the overlay shows for one rice: names, wallpaper, palette from its colour scheme and a
 //! cached preview screenshot (SPEC.md §2–3). Nothing here fails; missing pieces are `None`.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -127,22 +126,6 @@ fn scheme_palette(name: &str, dirs: &[PathBuf]) -> Option<Palette> {
 
 type Rgb = [u8; 3];
 
-/// `Group → key → colour` for the groups a palette needs.
-fn parse_scheme(text: &str) -> HashMap<(String, String), Rgb> {
-    let mut out = HashMap::new();
-    let mut group = String::new();
-    for line in text.lines().map(str::trim) {
-        if let Some(g) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            group = g.to_string();
-        } else if let Some((k, v)) = line.split_once('=')
-            && let Some(rgb) = parse_rgb(v)
-        {
-            out.insert((group.clone(), k.trim().to_string()), rgb);
-        }
-    }
-    out
-}
-
 /// `r,g,b` or `r,g,b,a` (alpha ignored).
 fn parse_rgb(v: &str) -> Option<Rgb> {
     let mut it = v.split(',').map(|p| p.trim().parse::<u8>());
@@ -173,8 +156,8 @@ const DEFAULT_TEXT: Rgb = [35, 38, 39];
 const DEFAULT_ACCENT: Rgb = [61, 174, 233];
 
 fn parse_palette(text: &str) -> Palette {
-    let s = parse_scheme(text);
-    let get = |g: &str, k: &str| s.get(&(g.to_string(), k.to_string())).copied();
+    let s = crate::kconfig::groups(text);
+    let get = |g: &str, k: &str| s.get(g)?.get(k).and_then(|v| parse_rgb(v));
     let background = get("Colors:Window", "BackgroundNormal")
         .or_else(|| get("Colors:View", "BackgroundNormal"))
         .unwrap_or(DEFAULT_BG);
